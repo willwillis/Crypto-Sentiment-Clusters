@@ -11,6 +11,8 @@ from nltk.stem import WordNetLemmatizer, PorterStemmer
 from string import punctuation
 import re
 
+import tweepy
+
 analyzer = SentimentIntensityAnalyzer()
 api_key = os.getenv("NEWS_API_KEY")
 newsapi = NewsApiClient(api_key=api_key)
