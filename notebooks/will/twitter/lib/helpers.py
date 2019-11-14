@@ -42,7 +42,7 @@ def filter_tweet_fields_as_dict(input_file):
             "id": data["id"],
             "lang": data["lang"],
             "retweet_count": data["retweet_count"],
-            "retweeted_status" : None,
+            #"retweeted_status" : None,
             #"entities" : None
 #             "in_reply_to_screen_name": data["in_reply_to_screen_name"],
 #             "in_reply_to_user_id_str" : data["in_reply_to_user_id_str"],
