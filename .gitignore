@@ -105,3 +105,4 @@ SH_tweets*.json
 notebooks/will/twitter/tweepy.ipynb
 notebooks/will/twitter/download-hourly-send-to-pd.py
 notebooks/will/twitter/FirehoseHourly.ipynb
+nohup.out
