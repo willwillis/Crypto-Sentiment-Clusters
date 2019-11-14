@@ -64,7 +64,7 @@ def process_df(df,tokenize=False,sentiment=False,**kwargs):
 
         sentiment_score_list = []
 
-        for tweet_text in df['text']:
+        for tweet_text in df['full_text']:
             sentiment_score = analyzer.polarity_scores(tweet_text)
             sentiment_score_list.append(sentiment_score)
 
