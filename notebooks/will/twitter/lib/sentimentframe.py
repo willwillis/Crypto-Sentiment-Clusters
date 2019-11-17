@@ -36,6 +36,13 @@ def clean_tokens(text):
     lowered_sw = [word.lower() for word in tokens if word.lower() not in sw]
     #get lemmatized clean tokens
     clean_tokens = [lemmatizer.lemmatize(word) for word in lowered_sw]
+    #print(f"BEFORE {clean_tokens}")
+    element = 'http'
+    for item in clean_tokens:
+        if re.search(r'http', item):
+            #print(f"{item}")
+            clean_tokens.remove(item)
+    #print(f"AFTER {clean_tokens}")
     return clean_tokens
 
 # article = tweet_text
