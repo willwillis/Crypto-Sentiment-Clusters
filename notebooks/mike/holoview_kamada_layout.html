@@ -1,0 +1,833 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+
+div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="fb4ae544-2b2c-46e7-91f1-daa33f57ea42" data-root-id="10745"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"bacf2bb3-dc6c-43c5-bc83-5f9078945589":{"roots":{"references":[{"attributes":{"align":null,"below":[{"id":"10754","type":"LinearAxis"}],"center":[{"id":"10758","type":"Grid"},{"id":"10763","type":"Grid"}],"left":[{"id":"10759","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":800,"plot_width":800,"renderers":[{"id":"10792","type":"GraphRenderer"}],"sizing_mode":"fixed","title":{"id":"10746","type":"Title"},"toolbar":{"id":"10770","type":"Toolbar"},"x_range":{"id":"10742","type":"Range1d"},"x_scale":{"id":"10750","type":"LinearScale"},"y_range":{"id":"10743","type":"Range1d"},"y_scale":{"id":"10752","type":"LinearScale"}},"id":"10745","subtype":"Figure","type":"Plot"},{"attributes":{"edge_renderer":{"id":"10790","type":"GlyphRenderer"},"inspection_policy":{"id":"10803","type":"NodesAndLinkedEdges"},"layout_provider":{"id":"10781","type":"StaticLayoutProvider"},"node_renderer":{"id":"10785","type":"GlyphRenderer"},"selection_policy":{"id":"10801","type":"NodesAndLinkedEdges"}},"id":"10792","type":"GraphRenderer"},{"attributes":{},"id":"10752","type":"LinearScale"},{"attributes":{},"id":"10750","type":"LinearScale"},{"attributes":{},"id":"10815","type":"Selection"},{"attributes":{"source":{"id":"10780","type":"ColumnDataSource"}},"id":"10791","type":"CDSView"},{"attributes":{"fill_color":{"field":"community_str__","transform":{"id":"10778","type":"CategoricalColorMapper"}},"size":{"units":"screen","value":7}},"id":"10782","type":"Circle"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"10744","type":"HoverTool"},{"id":"10764","type":"SaveTool"},{"id":"10765","type":"PanTool"},{"id":"10766","type":"WheelZoomTool"},{"id":"10767","type":"BoxZoomTool"},{"id":"10768","type":"ResetTool"},{"id":"10769","type":"TapTool"}]},"id":"10770","type":"Toolbar"},{"attributes":{"callback":null,"end":1.1,"reset_end":1.1,"reset_start":-1.1,"start":-1.1,"tags":[[["y","y",null]]]},"id":"10743","type":"Range1d"},{"attributes":{},"id":"10764","type":"SaveTool"},{"attributes":{"line_color":{"value":"#d3d3d3"}},"id":"10787","type":"MultiLine"},{"attributes":{},"id":"10803","type":"NodesAndLinkedEdges"},{"attributes":{},"id":"10766","type":"WheelZoomTool"},{"attributes":{"fill_color":{"value":"limegreen"},"size":{"units":"screen","value":7}},"id":"10784","type":"Circle"},{"attributes":{"factors":["5","91","1","3","0","17","10","18","15","13","7","6","138","2","32","4","115","11","33","39","34","35","47","148","70","146","8","57","154","50","58","28","77","103","71","86","74","151","139","128","114","23","96","98","43","153","52","61","56","26","97","80","37","29","152","87","53","122","27","68","84","36","79","105","129","89","108","81","24","131","155","75","140","124","63","69","62","40","78","45","134","106","95","126","142","85","60","59","116","111","31","12","119","82","112","145","92","141","88","83","110","130","102","49","100","44","22","14","120","104","101","107","135","156","67","113","132","64","46","51","149","41","121","38","66","93","42","9","72","109","21","147","76","144","54","117","137","25","94","150","30","16","125","123","133","48","20","90","136","65","19","73","143","55","118","127","99"],"palette":["#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22","#dbdb8d","#17becf","#9edae5","#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5","#8c564b","#c49c94","#e377c2","#f7b6d2","#7f7f7f","#c7c7c7","#bcbd22"]},"id":"10778","type":"CategoricalColorMapper"},{"attributes":{"callback":null,"renderers":[{"id":"10792","type":"GraphRenderer"}],"tags":["hv_created"],"tooltips":[["index","@{index_hover}"],["community","@{community}"]]},"id":"10744","type":"HoverTool"},{"attributes":{"callback":null,"end":1.1,"reset_end":1.1,"reset_start":-1.1,"start":-1.1,"tags":[[["x","x",null]]]},"id":"10742","type":"Range1d"},{"attributes":{},"id":"10801","type":"NodesAndLinkedEdges"},{"attributes":{},"id":"10765","type":"PanTool"},{"attributes":{"data_source":{"id":"10779","type":"ColumnDataSource"},"glyph":{"id":"10782","type":"Circle"},"hover_glyph":{"id":"10784","type":"Circle"},"muted_glyph":null,"nonselection_glyph":{"id":"10783","type":"Circle"},"selection_glyph":null,"view":{"id":"10786","type":"CDSView"}},"id":"10785","type":"GlyphRenderer"},{"attributes":{"overlay":{"id":"10814","type":"BoxAnnotation"}},"id":"10767","type":"BoxZoomTool"},{"attributes":{"data_source":{"id":"10780","type":"ColumnDataSource"},"glyph":{"id":"10787","type":"MultiLine"},"hover_glyph":{"id":"10789","type":"MultiLine"},"muted_glyph":null,"nonselection_glyph":{"id":"10788","type":"MultiLine"},"selection_glyph":null,"view":{"id":"10791","type":"CDSView"}},"id":"10790","type":"GlyphRenderer"},{"attributes":{},"id":"10755","type":"BasicTicker"},{"attributes":{"callback":null,"data":{"end":{"__ndarray__":"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0gAAANYDAADQAQAA8wMAACIEAAAeAAAAsAEAAG4AAABvAAAArwEAADYDAABgAwAACwEAAIICAACDAgAAGwAAAKkBAACEAAAAHgEAAEQBAACaAQAAMAEAAEIAAABjAQAA0AEAALwBAADFAgAAawIAAEEEAAAuAAAAAQIAAAkCAADiAgAA5wIAAB8BAABxAQAATwQAAPsCAADLAgAApwEAANQDAACtAAAACgIAABQBAAAvAQAADgEAANkAAAC6AgAARgQAAC0DAABcAgAATQIAACACAAAIAAAAGAEAAHgBAAD4AwAA8wMAANACAAAvAwAAWQAAAJoBAADYAAAA+AEAAOICAADnAgAAHwEAAHEBAABVAwAARwMAABMBAABWAAAAtwIAAMIDAAA3BAAAVgAAACAEAAAXBAAA9AMAABYDAAAIAAAA0QAAAPMDAABIBAAANQEAAGcBAACwAwAAowAAAC8DAABBBAAAPQIAAEoCAABBBAAA2AAAAGgCAAA7AAAA/wEAAFUAAABgAAAAPQAAAAoCAABEBAAAoQEAADEAAACEAAAAtwMAAKQCAABkAAAA/gAAAMQBAAAqAQAAUgQAACACAADCAgAANAMAAHQDAAB5AQAAdgAAACwBAACTAQAAwQEAAJoBAADVAAAA8wMAAOMAAACFAAAA+AAAAKwCAADqAQAADAMAAMYAAABNAgAAawMAALABAABuAAAAbwAAAK8BAAA2AwAA2QEAACgCAACjAwAAHAEAAEcCAAApAAAAhwEAANIAAADEAwAAUgAAAJMCAAAFAAAAfgMAAAgDAACkAgAAZAAAAP4AAABSAAAA0QMAAHICAADzAwAALAEAAHYAAABTAAAAhAMAAA8CAAAyAQAA1AMAADACAACzAgAA9gAAANsCAABRAQAAZAAAAAgCAABIBAAANQEAAGcBAACwAwAAowAAAC8DAADjAAAAhQAAAFUAAACYAAAALgMAADMBAACJAgAAuQIAADEBAAAgAwAARQMAAOMAAACFAAAAAgMAAIwAAADbAgAA7wIAAAIEAABkAAAAMAIAAAYCAAB0AgAAOwMAAHECAABRAQAAsQMAAD8EAACuAgAATgIAALIAAADCAwAAVgAAAFIAAAD1AwAANwQAALQDAADYAAAANAAAALQDAABVAAAAtwAAAOMAAACFAAAALgMAAPABAAC7AgAA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","dtype":"int32","shape":[2774]},"start":{"__ndarray__":"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","dtype":"int32","shape":[2774]}},"selected":{"id":"10817","type":"Selection"},"selection_policy":{"id":"10818","type":"UnionRenderers"}},"id":"10780","type":"ColumnDataSource"},{"attributes":{},"id":"10817","type":"Selection"},{"attributes":{"graph_layout":{"0":[-0.2060699788090717,-0.3488433425547904],"1":[-0.022920156505202443,-0.10442294615360995],"10":[0.0764563511640755,0.21045165132256116],"100":[-0.21124707755510047,0.2144192885306468],"1000":[-0.032075300916627775,-0.11428441463836139],"1001":[0.19155000582386397,0.13118994867285652],"1002":[0.14497301580609348,0.05366396968582304],"1003":[-0.45441986922259014,0.0454247867671197],"1004":[-0.044558159945060336,0.1537526721555029],"1005":[-0.024108488177762413,-0.10415364531594073],"1006":[0.15652617392887488,0.021654365621621135],"1007":[0.2649033681777547,0.05758923969885965],"1008":[0.09766949082018139,-0.04364309496487494],"1009":[0.48247565025712197,-0.003227524358779728],"101":[-0.010581363560315603,-0.045595650925423954],"1010":[-0.0904272226242941,-0.05688763867183626],"1011":[-0.09505232366572366,-0.020114379929029855],"1012":[0.16544174468727882,0.18196181779208434],"1013":[0.03968952360004232,0.09956132098233098],"1014":[0.19684484731570553,-0.02348063540059431],"1015":[0.09256906747022532,0.12347602457009893],"1016":[-0.12793751631710495,0.10328138170069462],"1017":[0.12711092928951304,0.44442114268426225],"1018":[0.2583452742132471,-0.15929447308832181],"1019":[0.08354882698438874,0.06669163086929482],"102":[0.29824156215097325,0.030975554806079567],"1020":[-0.07461665696588633,-0.07651504732685792],"1021":[-0.3526633849675933,0.15486276289097503],"1022":[-0.3081458831080052,0.006336337912445353],"1023":[-0.09822213919083976,0.17633247993487086],"1024":[0.008271959771406356,0.11581734213713074],"1025":[-0.25857721188216365,-0.19377726659507993],"1026":[-0.3432303694822224,0.3101682997113317],"1027":[-0.3023368038403032,0.238722991401373],"1028":[-0.20146300398685155,0.17993180123733735],"1029":[0.012658342600116765,0.23042115576352273],"103":[-0.0113213614411727,-0.00751736053899819],"1030":[0.03888169028571032,0.15203855435376676],"1031":[0.10299997772398231,-0.028912360211848825],"1032":[-0.1065306706520199,0.006609039208040426],"1033":[0.34753832173295757,0.07943034928388437],"1034":[-0.11102669954766785,-0.1757019636178915],"1035":[0.1817957479119804,-0.343181649521481],"1036":[0.20097870855067676,-0.15856233722834312],"1037":[-0.045892554568858136,-0.27495085010773046],"1038":[0.07998867840637902,-0.1258335229451837],"1039":[-0.09031257699663042,0.05833877981781127],"104":[-0.06610069061015951,0.02324629772843392],"1040":[-0.22586170236250122,-0.06389540081866195],"1041":[0.25752685413366766,-0.04810758140226223],"1042":[-0.07874170509795841,-0.5624472869627227],"1043":[-0.04463164948612304,-0.37682483647641757],"1044":[-0.03757322976712404,-0.31653618675989337],"1045":[-0.4062513958854852,0.00569622190247048],"1046":[-0.14578010076258718,-0.2645015761656118],"1047":[0.3308672651826314,0.1872327126552158],"1048":[-0.21696595337192617,0.23450001179491214],"1049":[0.05768847465303283,0.10058496858472464],"105":[-0.30454665250679186,0.06080089617160229],"1050":[-0.07571713125939554,-0.37867035029360435],"1051":[-0.28423847324082874,-0.3466255961321129],"1052":[0.05778398975840761,0.29325327772427146],"1053":[0.1813611014277493,-0.14750058414368386],"1054":[-0.1557625988011257,-0.33933442955954063],"1055":[0.08115442139076198,0.040118758550944496],"1056":[0.08982543953301173,0.16196708004663568],"1057":[-0.009234973185242476,-0.060370176737304056],"1058":[0.17358489314829784,0.27872701247217785],"1059":[-0.12165375358716148,0.022130383752564518],"106":[-0.0707851899707149,0.05463624603788191],"1060":[0.5702319459972517,0.15925514093230853],"1061":[0.1747224376036792,-0.3738361917663583],"1062":[-0.3704920409959727,0.1962445263232975],"1063":[0.2813994545484501,0.15140627071977342],"1064":[-0.24719939459991763,-0.008842839612772728],"1065":[0.18114673253521912,-0.17542892998626647],"1066":[-0.008053883656398591,0.34128117538879416],"1067":[-0.3150612098281624,0.03725989155403358],"1068":[0.03711058476052564,0.0455773836185835],"1069":[0.025528616775250368,0.32507414933752454],"107":[0.545972935944734,-0.1784640990225424],"1070":[-0.21357649829053157,-0.10013938764061343],"1071":[0.24773960221743183,0.1673419270862198],"1072":[0.020530927638855265,0.11978884413749094],"1073":[-0.013134773786016003,0.29837261201021953],"1074":[-0.039073636020635454,0.2720687132973564],"1075":[0.155262374718326,-0.22779714393989767],"1076":[0.38032358721671744,-2.023089128830849e-05],"1077":[-0.3033867561530841,0.0778079846302582],"1078":[-0.3395878844832917,0.18610503703976944],"1079":[0.10529187768842625,-0.08957801690191165],"108":[0.15512486180770466,0.2292513131639726],"1080":[-0.2147579994700379,0.597535114423601],"1081":[-0.09995935891815787,-0.24443193707913027],"1082":[-0.34211804620972913,-0.01592602468914885],"1083":[-0.29181429505287626,0.08050159408792432],"1084":[0.07946709842577292,-0.02749611811959377],"1085":[-0.2643516608673785,-0.3618679001503591],"1086":[-0.25713299058273126,-0.06264597097839181],"1087":[-0.28829031803198635,0.3405342499110937],"1088":[0.21565295445369623,0.27240773712725935],"1089":[-0.08859855518332961,-0.2702676927835107],"109":[-0.07359728794962166,-0.16458931510508754],"1090":[-0.18015353712770915,0.17888933692415965],"1091":[-0.045356103942116054,-0.1871471728581891],"1092":[0.02641012887166825,0.1660938306558475],"1093":[0.22291504944974283,-0.3530418787755835],"1094":[0.13305760503154446,-0.019757676180161374],"1095":[-0.26280328656189045,-0.26386269857110983],"1096":[-0.26731068576230504,-0.17537287668802826],"1097":[-0.12892294013123357,-0.39500848132546373],"1098":[-0.027102851834810586,-0.02186491442274292],"1099":[-0.16363630884535457,0.24705569208608075],"11":[-0.05413600871364877,-0.43070638767312497],"110":[-0.2646668815978038,-0.43705848046575313],"1100":[0.1665123690042689,0.5558567106766362],"1101":[-0.15062083379886765,-0.04651221533204423],"1102":[0.060838303430880585,-0.08796342667668379],"1103":[0.13801392705071724,-0.13284312588918273],"1104":[0.2632206705487544,-0.36974531759292467],"1105":[-0.01808514185098246,-0.045557680275768946],"1106":[0.2963545672788792,-0.07574864620139465],"1107":[-0.21455944289422194,-0.2748362668599523],"1108":[-0.16893544404779628,0.14576530356298814],"1109":[-0.1060859126768838,0.3093291895440714],"111":[-0.3697737408105406,-0.4732399693537465],"1110":[-0.13423399033733,0.16263778738546483],"1111":[-0.19395696714746974,0.28638624225472514],"1112":[0.08249505554280469,-0.06810089176372801],"1113":[0.26909407130566815,-0.35027766016047085],"1114":[-0.20194144748830217,0.07066774964840118],"1115":[0.19230973191967007,0.09745301445889015],"1116":[0.009314886510840465,-0.1065292147731807],"1117":[-0.16448181171471904,0.26441169658029584],"112":[-0.2679056245506546,0.13628744820480626],"113":[-0.18318739128986639,0.025027618129653664],"114":[0.4034155999203311,-0.09189534648660488],"115":[0.1904256416367311,-0.24578668317352864],"116":[-0.34957226309860256,0.12068830788353946],"117":[0.030902047402617486,0.2654436519493155],"118":[0.3011396526953678,-0.5677739445174758],"119":[-0.08066314160621708,-0.1445230107852886],"12":[-0.4291590184084409,-0.042394404716389576],"120":[-0.006685593713594655,-0.5672956384613302],"121":[-0.05829033140611642,-0.15970366086186588],"122":[0.11472858344647065,0.22521933791594678],"123":[0.23034215584784828,0.0519763177699244],"124":[0.007035592035337271,0.10644222524620497],"125":[0.043494486170312804,-0.0760354058443769],"126":[0.0055055984232427356,-0.058740472509572816],"127":[0.011547604739463244,-0.1378514486133266],"128":[0.11034583156482207,0.26420506087544515],"129":[0.02179968966089011,-0.10469479585355464],"13":[-0.07789741496891019,-0.021889185751167682],"130":[-0.07919929024998945,-0.07174508047214787],"131":[-0.031847044551773084,-0.09293148157904776],"132":[-0.1982292058104579,0.2379541603223062],"133":[0.09049578040591601,-0.2409220204600395],"134":[-0.43874388157540617,0.18294336281670834],"135":[0.050602657768706,-0.476587119125934],"136":[-0.004390014762188614,-0.06907612041867386],"137":[0.1480628028745347,0.3702968561704322],"138":[0.19644928701127454,0.38883116008360585],"139":[0.2825544757214607,0.054521136680540455],"14":[-0.057912300125889174,0.18611332466674774],"140":[-0.35308782685857265,0.2793998552027569],"141":[-0.04235682952086192,-0.09815167353060363],"142":[0.09125063011464811,0.038870556284357545],"143":[0.3169016236118412,-0.10844275269763398],"144":[0.35842046666700456,0.15658502328456608],"145":[-0.3161066377805533,-0.24557205619633482],"146":[0.024021787442751456,0.14120345956479016],"147":[0.0028811256514900143,0.4301483606575683],"148":[-0.24717448264475098,-0.5651118458718241],"149":[-0.19106576230180722,-0.4602751272444697],"15":[-0.001513226605549885,0.0953693107676015],"150":[0.5636037005988501,-0.13014814809936853],"151":[0.3257422653089513,-0.1859802866813227],"152":[0.16850019808596184,-0.3950664138170287],"153":[0.3250907839913377,-0.048368458777163066],"154":[-0.3324816973206018,-0.05499771820751404],"155":[-0.035925937258887146,-0.11313148484574738],"156":[0.106799312770053,-0.006399753217277165],"157":[0.19405869150606203,0.2505539150400195],"158":[-0.22440747283322177,0.24980018953509714],"159":[0.08700055230208632,-0.0516242208825483],"16":[-0.1743355216197083,0.3917887946555325],"160":[-0.12672871884948694,-0.11501431134718047],"161":[0.10060073278794361,-0.036388557647140676],"162":[0.03848237770924607,0.5092560263379697],"163":[-0.25855703804930996,-0.006574933694043795],"164":[-0.34124110034326793,-0.27719612050052256],"165":[0.18596440522804536,-0.031328075102145726],"166":[-0.2902746264209273,0.28627077845236854],"167":[0.02417225951380528,-0.3129322655906347],"168":[0.07982565749670287,-0.5072029940569528],"169":[-0.21105550603496243,-0.18926663082250317],"17":[0.017118572982557725,-0.2518363702633099],"170":[-0.48062592830037915,-0.11514238984081233],"171":[-0.10003866618470314,-0.2748812736300578],"172":[0.0832645192652241,-0.06715850314291903],"173":[0.014349344401953158,-0.055006835082025626],"174":[-0.031212011826301792,-0.18172067055747804],"175":[-0.015828783745256158,0.08888891599291902],"176":[0.057779628971131404,-0.08999946168884682],"177":[0.22089348490076824,-0.09566468084823193],"178":[0.23930881331898168,-0.23195401909419613],"179":[0.2417728407681644,0.05741569807221315],"18":[0.019726385839299136,0.31783230698198733],"180":[0.2699992663464594,-0.10628846206593019],"181":[-0.12263670937077112,-0.01821460095382515],"182":[-0.015437951524260926,0.0511256286164845],"183":[-0.09310836705531514,-0.22094798656377448],"184":[-0.14513810034578553,0.05476637726276488],"185":[-0.06344518961994522,0.4330018687383336],"186":[0.05525159500403801,0.09139885199451878],"187":[0.03628810168218159,0.09059529293300761],"188":[-0.0038760606243388816,-0.10685867600071929],"189":[-0.21520973381519343,0.10931542978648742],"19":[0.09840482273504625,-0.04196102046646713],"190":[0.008102244106625123,-0.10662773369494179],"191":[-0.06679244800225757,0.08314311009223112],"192":[-0.05830057079179673,-0.2226637798502],"193":[0.05310208607109999,-0.1359873558571016],"194":[0.018702426781391966,-0.037454280705678675],"195":[-0.13811092673439837,-0.24008689960995466],"196":[-0.1232716747098294,0.06579835132788164],"197":[0.20464113048818972,-0.036333039258682934],"198":[-0.15396902819001548,-0.009626665371555041],"199":[0.2404817033383159,0.22647777744927336],"2":[0.12274269129502433,-0.26118698312034],"20":[-0.25847293593661447,0.07888749905126671],"200":[0.10689372970100591,-0.004566071845384061],"201":[-0.10428428278606378,0.02266119570512181],"202":[-0.3839947408002105,-0.10257801321573833],"203":[0.1963993230922859,-0.36970514151374634],"204":[0.3193749410912852,-0.2753266199911874],"205":[-0.09842974292988643,-0.04143513012981298],"206":[0.09652535404053876,-0.1997545075508868],"207":[-0.10673640497148,0.0012117882739454148],"208":[-0.0740125623100968,0.00836780483470703],"209":[-0.17347362485437562,0.03282548094158414],"21":[0.07326955199574144,0.3109695675328031],"210":[0.11950717567130956,0.052535203390126725],"211":[0.6022942725120678,0.023566026373657848],"212":[-0.06593244851340117,-0.0836763714652919],"213":[0.09104415786294473,0.34293833407981633],"214":[0.24525365159175677,0.35679363784666396],"215":[-0.19289232326455627,0.21485333913033425],"216":[0.054009884234736766,-0.023625193983889316],"217":[0.11536145883863723,-0.0342444906601525],"218":[0.2819649442632087,-0.0013699393021932166],"219":[-0.0664518396844496,0.34073339271454417],"22":[-0.11262731570457594,0.34352813110086855],"220":[0.18974662629541744,-0.2356099651142634],"221":[-0.30696466420548735,-0.120400910811838],"222":[0.2592242096988887,0.16043574711673642],"223":[-0.11302408874328192,-0.0305860971345934],"224":[0.15174949961563056,0.20211559378347257],"225":[0.14169617770747825,-0.4572444834351722],"226":[0.028885951134355044,0.10272465583937423],"227":[0.11796258064692033,-0.14974656363998956],"228":[0.1506620853144978,-0.3421649017434395],"229":[-0.4667837495237953,-0.08645035344534566],"23":[-0.2668394368255633,0.02500855562981286],"230":[0.02589113264383381,-0.268429006516384],"231":[0.005100267750566662,-0.10681201698629741],"232":[0.4285965813012313,0.21194080146433467],"233":[0.5635153250958548,-0.11331498504719922],"234":[-0.11402249493160929,-0.18226286049844556],"235":[-0.2822566646716286,-0.08273780274924301],"236":[-0.21742367884343433,-0.23331618032164558],"237":[0.1688599716498466,-0.007525434719231337],"238":[-0.06679750945245279,0.13361953999735993],"239":[0.3524528214525056,-0.14899812709808555],"24":[-0.18245216792131724,0.5290265272299723],"240":[-0.0409397974383348,-0.15937528802456888],"241":[-0.1498227862515256,-0.11057811017213409],"242":[-0.03628080033081232,-0.08888743802012067],"243":[-0.009197212892723879,0.10626221390673271],"244":[0.19525829603276587,0.07185008523586743],"245":[0.0064155507284651,0.1064806399694729],"246":[0.27916415742771256,-0.22649858424482538],"247":[-0.3767826361635299,-0.07821625990161747],"248":[0.11196290118759003,-0.1570169602017228],"249":[0.3188461332138006,-0.07615286754238816],"25":[0.17881846302336307,-0.2586871335455161],"250":[-0.10565034419752661,0.05588813515238979],"251":[0.20692262292775418,-0.18391828831254256],"252":[-0.19583428973905195,0.144268279846307],"253":[-0.14279299243043142,-0.05782548897849234],"254":[-0.1605451505907918,0.08304138181751447],"255":[0.1068653696254245,-0.00518510299408042],"256":[0.1974103620857736,0.22934844456066902],"257":[0.2802106929954777,-0.21532937608700028],"258":[-0.040682734223652164,-0.0988581278129597],"259":[-0.3463979702387375,0.2936126228808587],"26":[0.09764408004128382,-0.0592178066283972],"260":[0.04580929663202259,-0.22727692100668137],"261":[-0.17187085220957246,0.06234477971144366],"262":[-0.11391282070076264,0.06686094523224463],"263":[0.588836846745397,0.10931058278581016],"264":[0.5713027786989178,-0.061802132307243594],"265":[0.26205818048443835,0.26203822698390583],"266":[0.57244084520359,-0.03435922825308317],"267":[-0.014928463798666887,-0.05626980371178139],"268":[-0.008630006176428576,-0.43927754953949033],"269":[0.08334685643090611,-0.0954592640756925],"27":[0.03470495252614251,0.11561271387238915],"270":[0.0794904704665803,-0.21258136336362543],"271":[-0.49831375021515156,0.08674039647202517],"272":[0.36205633002575793,-0.30372624711417445],"273":[-0.19375187938019892,-0.08354716039279654],"274":[0.06695373756854449,0.3105200509962166],"275":[0.10066021337614839,0.2500156136753069],"276":[0.22471958019443486,-0.010433833651386722],"277":[0.07174197657658343,0.33524353664670753],"278":[-0.10590650371757737,0.013204544424804473],"279":[0.13137265380496246,-0.08342302867738291],"28":[-0.06000816505639408,0.06430272951373826],"280":[-0.14018726727424988,0.18417566154202752],"281":[0.16300901213027005,-0.11830502189199801],"282":[0.18636670552062534,0.32533077876556854],"283":[0.0694354523386628,-0.08136092055417224],"284":[-0.44151394965656515,-0.43997343770785063],"285":[0.025498144135360872,-0.5694138089635679],"286":[-0.32281856364036543,0.1290807184428556],"287":[-0.4729903729233083,-0.25377781288917967],"288":[0.015388342132375762,0.10556997372400169],"289":[-0.08349118703512169,-0.06668356700193787],"29":[-0.01723586821204809,0.2220527947055862],"290":[-0.06989040247310396,-0.2361956282236485],"291":[-0.050465285248909905,-0.09423303570497304],"292":[0.058907715182824213,-0.195760674695673],"293":[0.029606374567454866,0.03463201190432888],"294":[0.0812575192222866,0.2913814673980608],"295":[0.06824122198848095,-0.37064379521378127],"296":[-0.25940205210081596,-0.5612167031750795],"297":[-0.0486559608318798,0.04246761933729301],"298":[0.5333029401486512,-0.22685964812575396],"299":[0.035920080419294675,0.22598623918861693],"3":[0.1395329846390281,0.11690185220471096],"30":[0.19186373375422214,0.19456527686154468],"300":[0.3346072879216703,-0.5487197832141198],"301":[-0.34912956109462523,-0.10120767213716768],"302":[0.20490014224548506,-0.3011650893069462],"303":[0.2529314566359232,-0.082989393160999],"304":[0.23774676483237567,0.24655603364082015],"305":[0.3089599154651397,-0.3877913997101986],"306":[0.112476070991936,-0.08642873169583838],"307":[-0.21056957121143485,0.2570630526216465],"308":[-0.1157600994059455,-0.27938815507869585],"309":[-0.2599908045643324,-0.014872159726716705],"31":[-0.02934677545814768,-0.14061450986490948],"310":[0.09247906392279238,-0.1466536349967289],"311":[0.1627139163940012,-0.1295608482835526],"312":[-0.1400152632100373,0.06370385363408122],"313":[-0.03316382449364318,-0.04894827804622043],"314":[0.4098979450959545,-0.10554857502636147],"315":[0.02765599943965888,0.11427115796820396],"316":[-0.10704854903912356,-0.04854282393044011],"317":[-0.055706112895942426,-0.0912222556797519],"318":[0.07409246005451857,-0.2639952931519467],"319":[0.2752451194901107,-0.3863327968636839],"32":[0.0583005801224024,-0.0896632447098402],"320":[-0.050661243051470094,-0.5661584362988576],"321":[0.3060170381888598,-0.0205651983051592],"322":[0.005944594209403883,0.17870946007916103],"323":[-0.008761427434458723,0.14128670742405966],"324":[0.23985599071057834,0.3045462366766892],"325":[0.2565821577208061,0.047029566181931756],"326":[0.025918109119260197,-0.10375341438191865],"327":[0.03883921902195124,-0.3533038059735003],"328":[-0.07036714962117735,0.22470146054253473],"329":[0.5480416790087286,0.0626407074966641],"33":[-0.346556859479897,0.020471478818698367],"330":[0.08758656209327834,-0.06141776244582668],"331":[-0.1777119506623259,-0.3961001655819572],"332":[-0.029342297239944377,-0.10279696232292058],"333":[-0.09712404024828447,0.34525935562226445],"334":[-0.26572838433949436,0.25382010233542746],"335":[-0.3916355136278709,0.3207908976911906],"336":[-0.127268338989821,0.007265674208491943],"337":[-0.2833584156238905,0.3054063726427837],"338":[-0.09344358381898323,0.03185291526770566],"339":[0.453270034488564,-0.4058644568712622],"34":[0.05982203112978828,0.05056453783500033],"340":[0.0311628760814942,-0.10230338159321438],"341":[-0.04480461098645573,-0.05847313457581503],"342":[-0.01942954570396983,-0.2811627028202892],"343":[0.04627660752894146,0.24136948026894708],"344":[-0.10888323572323781,0.03944574792296951],"345":[0.20987407935248112,0.2867948450467628],"346":[-0.053633241128052116,-0.09246115664597028],"347":[0.05187946043137419,0.08013693407039571],"348":[-0.22796482510363061,-0.14358276937772183],"349":[0.09362158321704799,-0.05175602950857018],"35":[-0.1891553889744787,0.23922513754294303],"350":[0.10698733145481969,-0.000940651622796733],"351":[0.18457431179471492,-0.08274705081815137],"352":[0.42030625359674983,-0.25638224806398535],"353":[0.07381177881361796,0.2766510764391832],"354":[0.13827569510170235,0.08698273125958689],"355":[0.13644201922727242,0.23745514439933751],"356":[-0.19214215079855063,-0.26977867934142596],"357":[0.009286626762938168,-0.23826135559075184],"358":[-0.07330768836888524,-0.07777427806311583],"359":[-0.2485679584220432,-0.03021348117537647],"36":[-0.029212259172714184,0.10257856958539106],"360":[-0.31032459613622354,-0.0937804977793115],"361":[-0.5366791917546696,-0.14588674548429154],"362":[-0.06774752782065285,-0.010255659345173309],"363":[0.13181350299188968,0.29755148389758923],"364":[0.1017697407846569,-0.03297911963354253],"365":[-0.37910522614721526,-0.42531324256061404],"366":[0.3768383080466313,0.1309832595195337],"367":[-0.08677332477897197,-0.14434037779099138],"368":[0.11729241637208114,0.3143197376131502],"369":[-0.45392537519467857,-0.2849488329391517],"37":[0.1482738932365876,0.33875377062730594],"370":[0.19934532191842003,-0.07541791542738982],"371":[-0.20172451775561984,-0.04658956937884688],"372":[-0.4379340062890556,0.05712756912423228],"373":[-0.06632658517556256,0.28970221915798877],"374":[0.07347570909532135,-0.07773944768232892],"375":[-0.3194427231072716,0.1171979641836558],"376":[-0.16219038028359242,-0.03484597541448029],"377":[0.25268321552763157,-0.5919587951299872],"378":[-0.09347484458673433,-0.051700712010279815],"379":[-0.3019309893535734,0.30396123533830427],"38":[-0.35877599010664496,-0.24565080291242844],"380":[-0.012814038395975598,-0.3168179281069732],"381":[0.010186524362166993,0.011594588354402162],"382":[-0.2981486888542258,0.13079493803296624],"383":[0.06033148479968076,-0.15948716356942755],"384":[-0.3396242647795727,-0.0846186362247087],"385":[0.20650800621222892,0.16942644105551258],"386":[-0.08310361407927584,-0.0671674733314959],"387":[0.19620689202880962,0.08338791498166849],"388":[-0.4606516467596987,0.24165979162541323],"389":[-0.18082869057939324,-0.04545615328704581],"39":[-0.23983077849643186,-0.13079656098806536],"390":[0.26693133874333447,-0.1986690482576122],"391":[-0.3394326293195282,-0.529474776069118],"392":[-0.039121660801202066,-0.007553364183720684],"393":[-0.09818811827794477,-0.042007227671174735],"394":[0.43277987367376153,0.15798637246014802],"395":[0.13689810015843956,-0.057424894623854854],"396":[-0.04707029991407867,0.09570289589304688],"397":[-0.033505386948398094,0.13863296450098042],"398":[0.009144052488668881,-0.1679036066919052],"399":[-0.10007734231958144,-0.09710888410913943],"4":[-0.02129184456650619,0.2991577944837561],"40":[0.059714746655029315,-0.3948393114361753],"400":[-0.34310441742999426,-0.21030607848026409],"401":[-0.10888366272914372,0.011307965513574417],"402":[-0.11394185838462684,-0.1161655567613058],"403":[0.12777621633279065,0.3996513100850634],"404":[0.060930758254228896,-0.2910671547431785],"405":[0.06553009505255837,0.15233369143918146],"406":[-0.14692615132030026,-0.07493007726193882],"407":[-0.25927313631568183,-0.029998345307380513],"408":[0.14461604836863867,-0.15171612905757187],"409":[-0.06652007670603792,-0.0836657856562397],"41":[-0.35723013189874037,-0.5213431512241034],"410":[0.0880713334789729,0.07349672542483074],"411":[0.577920052193054,-0.012194415508919207],"412":[-0.08214931273799042,0.06803014040448802],"413":[0.09586944298219376,-0.04746361133167356],"414":[-0.09285707141041426,0.24567825537041918],"415":[0.21830445626305803,-0.2597819541367214],"416":[0.07751566513237457,-0.3114764348423201],"417":[-0.0434153765046441,0.029282073657854357],"418":[-0.40210453571668336,0.04976035428324968],"419":[0.2264134254961165,-0.2470211220322292],"42":[0.07932017102729351,0.08472052677881199],"420":[0.4786659669639855,-0.3543529750755042],"421":[0.027097227478380417,-0.10345241620184006],"422":[0.04524411498529039,0.29597941243584314],"423":[-0.21320618895012117,0.002445868865423134],"424":[-0.04911176464741971,-0.039351594683526725],"425":[-0.006027766781263406,0.120992771789871],"426":[-0.3828625979927606,0.23830201720399335],"427":[-0.03232796394241205,-0.2524936098001836],"428":[0.54968457277206,0.21404191337087528],"429":[-0.10000457225682453,0.27998156123460516],"43":[0.16008530221079365,-0.2984446510579036],"430":[0.12819431601424472,0.13080327208844145],"431":[-0.3829976606005804,-0.461844060816345],"432":[-0.32477173141087623,-0.4619711034483011],"433":[-0.007475836723553771,-0.10666463715091921],"434":[-0.030114456256685455,0.29338065797533597],"435":[-0.13238093469711765,-0.04723199440840698],"436":[0.26183574405149734,0.24036053821905567],"437":[-0.3812010384931228,-0.057495889500513875],"438":[0.03174237256320249,-0.2553027804059346],"439":[0.0760737755900123,-0.07520172228193979],"44":[0.297080137038555,-0.15961808504122046],"440":[-0.39066984411997274,-0.24503139617065517],"441":[-0.12482394155270245,0.3548789947457566],"442":[0.10082369162881033,-0.05044258748510278],"443":[0.5686718791496547,-0.08574023416998146],"444":[-0.0781040977848438,-0.23202302703958652],"445":[-0.454405202135788,-0.13239709289967566],"446":[-0.044929047830368225,-0.30478670404290253],"447":[0.15283848846465148,-0.2759487834630267],"448":[0.10232129865918789,-0.03122685311352633],"449":[0.18172139405469395,0.026845222471956823],"45":[0.5196782177533055,0.14571843521108496],"450":[-0.057385031518200305,0.012265728028366587],"451":[-0.32459143517721367,0.4910662826172646],"452":[0.513780378669642,-0.2665953470388922],"453":[0.4181389201255266,-0.2786665856406967],"454":[0.1263842371734807,0.20386442905897745],"455":[0.03075597591137591,-0.01595890302918386],"456":[0.21392640985193995,0.10982008611256884],"457":[-0.205079266445946,0.4354309873399601],"458":[-0.29199733311171294,0.24885230442151574],"459":[-0.19107318209175317,-0.03387686300464193],"46":[-0.08103856673653348,-0.5102451984026724],"460":[-0.11594187835654018,-0.22225687276907977],"461":[0.4321254052428923,0.25379014644304404],"462":[-0.11071761400840531,-0.1492292985919472],"463":[-0.12965052690881815,0.07987495067981666],"464":[-0.0886839383435464,0.01612647573355982],"465":[-0.3065968018607315,0.20146729635242347],"466":[0.11118090530593538,0.007172475149215828],"467":[-0.2079022893080842,-0.06835177197894356],"468":[0.1205792025439873,0.21838971848370148],"469":[-0.28634749163873235,0.36625669530502913],"47":[0.09601576152351585,0.44241270178118625],"470":[-0.2681421648514622,0.16840482974128307],"471":[-0.2946246416962271,0.1410750835775715],"472":[-0.03994488369475267,0.07078718490626926],"473":[-0.2971314044728853,-0.5474674132991977],"474":[-0.04510452403489281,-0.09691819570400922],"475":[-0.09977035190547254,-0.03808115374040198],"476":[0.10759110689495552,0.16353300038075513],"477":[0.07405360187028902,0.17630232691718223],"478":[0.3591858036987845,-0.10518737076977261],"479":[-0.11381796129025638,-0.005325706962856191],"48":[-0.07514032514288767,0.21884091875609638],"480":[-0.008573419767901297,0.2283006211652553],"481":[-0.28700436807025187,0.03939382932676392],"482":[-0.42785821490340104,-0.07467628220746446],"483":[0.10776576679289765,0.09391026385796324],"484":[-0.17575144760120642,0.13529666327498777],"485":[-0.4318528468559071,0.2625499507313445],"486":[0.22845988839789258,-0.21283190315387035],"487":[0.0012645551731139137,0.026816991270517346],"488":[-0.20466403031376748,-0.17501312219005083],"489":[0.25091400600326264,0.40345954794856653],"49":[0.05130436082925874,-0.010847674539013105],"490":[-0.10449414427859446,-0.2561505028019218],"491":[-0.14478640770984755,-0.2740680682567645],"492":[0.41705694065118337,-0.06494394564861453],"493":[0.2602970319883495,0.11691316556541807],"494":[-0.10525932012979378,-0.017905620339925217],"495":[0.20802292279945994,-0.21562399631202572],"496":[0.30068335689560455,-0.19193006555741093],"497":[-0.1294436105609018,-0.1024841658040615],"498":[-0.34678232568129996,-0.34198886539781065],"499":[-0.24608899566170594,0.2907267115559513],"5":[-0.37408314775201,-0.15682298030944797],"50":[0.10651816035507482,-0.010038256388206167],"500":[0.05680028754879024,0.021462988963809423],"501":[-0.031203302928498315,-0.10758999175776832],"502":[-0.2447102529639905,-0.15879389960132217],"503":[0.05659202772418464,-0.018281450358968214],"504":[0.15574002251749397,0.1900556007031679],"505":[0.31564960704526634,0.21224794317628162],"506":[0.3088128518553567,0.11033682004407722],"507":[-0.19076187520362992,-0.11226751592564733],"508":[0.05881959371387322,-0.08932401211489911],"509":[0.10418815302333077,0.11075417518616403],"51":[-0.08271330812914002,-0.06764914553174425],"510":[0.40013676189047875,-0.15612010538563212],"511":[0.10092061786265394,0.11680536587819515],"512":[-0.1676230916811839,-0.15669698516015018],"513":[-0.1930711580335095,0.3087636420924629],"514":[0.02920575409386301,-0.3278671950944276],"515":[0.4224043546132753,-0.1592996228876527],"516":[0.46161610651448937,0.10650297265349525],"517":[-0.2373644431084406,0.057789246938745126],"518":[-0.11638215023093566,0.12695192298098545],"519":[-0.24606419108833122,0.4005924328523954],"52":[0.05497174033816756,-0.22691601123656488],"520":[-0.3672160508079584,0.21042642469531833],"521":[-0.43779848871210214,0.3426531229762937],"522":[0.10625671437039623,0.010992565156051116],"523":[-0.2999807163455551,-0.12278779621941846],"524":[-0.27553422417661394,-0.08544038676380095],"525":[-0.24483726167882985,-0.12428826134003818],"526":[-0.08673238940995084,-0.368293751483261],"527":[-0.10935608591297441,-0.2932203511088297],"528":[0.07661219598591398,-0.1158036695444215],"529":[0.11211316944195548,-0.5023214971514541],"53":[-0.3039937038566926,-0.19663290204533587],"530":[-0.2905456446794841,0.26922162682450623],"531":[-0.08279261554783884,0.34847980198855977],"532":[-0.4017988477060451,0.0904503659709809],"533":[0.31199010483721523,0.22131876589159719],"534":[0.05415905903109849,-0.09222142292589958],"535":[-0.29249071326706305,0.14959301888754167],"536":[-0.33299338401784484,0.0792742201983821],"537":[-0.027462968732623057,-0.4356940134507632],"538":[0.0003896900710185944,0.1066660234946198],"539":[0.28737587610775156,0.30435339312578774],"54":[0.16314624078137724,-0.06110508909704873],"540":[0.015417678730259876,-0.6890765950902047],"541":[0.2096968126093737,-0.36373327009431583],"542":[0.10451831650706048,0.02283283878062144],"543":[-0.24352963347616563,-0.37635069515270964],"544":[0.056731674240980155,-0.07138742157804188],"545":[-0.14565532434360423,0.005569133805689146],"546":[-0.1264010735221198,0.20335811801452086],"547":[0.06134755528488978,-0.08760957702901571],"548":[0.30820436863094386,-0.007709034843603496],"549":[0.25652116028668215,-0.33588101357213196],"55":[-0.360335802698621,0.35984094718334825],"550":[-0.05257718686002398,-0.09306776624456894],"551":[-0.05276998075678468,-0.08292504681675324],"552":[-0.32430752804837,-0.5361602674791517],"553":[0.16471760035765462,0.3029387779504392],"554":[-0.23109334168397047,-0.25036016254674176],"555":[-0.1748911266782978,-0.10522516002335758],"556":[-0.23069344747339277,0.05339515642248695],"557":[0.055715866516205775,-0.09129017959393364],"558":[-0.08144979056408361,0.07060326134632654],"559":[0.1132140111528644,0.09819076554741199],"56":[0.02113335026283437,0.4398327063219885],"560":[-0.2615313889999232,0.28757395360573434],"561":[-0.16579728669227656,-0.19199838516311088],"562":[-0.1331923420816642,-0.2751252100570532],"563":[-0.13754922950610407,-0.10974603644631863],"564":[0.07238905541103147,-0.15639149065513203],"565":[-0.1774290245600052,0.18381719199389948],"566":[0.3201678173792609,0.1383832948971788],"567":[-0.3093199697416192,0.2129229383155616],"568":[-0.08223397695061797,0.15572807455494625],"569":[0.29990829011704967,-0.35167656966031935],"57":[0.10611593003417508,-0.01364312721150068],"570":[-0.2481688949849049,-0.09069080916283721],"571":[-0.005947146550485623,-0.021986857303282786],"572":[-0.08275646265706386,0.295695099167603],"573":[-0.08486948090416299,-0.23231249093732342],"574":[0.20942837129131464,0.15476278020078751],"575":[-0.11909697247079021,-0.43024236189498155],"576":[0.028368638284506215,-0.40771235067716227],"577":[0.1054959734451886,-0.01779960955028312],"578":[0.17515756300550253,-0.270693498124921],"579":[-0.33837236036556423,0.11000565029023981],"58":[-0.06934444203009343,-0.07490238177979039],"580":[-0.021143822702934773,-0.10479921396992742],"581":[-0.27551291974170383,0.06379779796910405],"582":[-0.1248803106959873,-0.13101034635123301],"583":[-0.4205681670543055,-0.4713514950341849],"584":[0.05474300222426963,0.1275141616867633],"585":[-0.05951700554511336,-0.12582856931961306],"586":[-0.14698924737779176,-0.22352006625987803],"587":[0.10213847028423918,-0.031819272540350656],"588":[0.2620634106971993,-0.06524319298749329],"589":[-0.015131659842215449,-0.12142960331417989],"59":[0.15570314544322697,0.11209033874242191],"590":[0.21796461951103518,0.36961322532280605],"591":[0.03759532585455452,0.2074347570326741],"592":[-0.2654929981249112,0.34889794776234273],"593":[-0.033368171986417276,-0.10156122082282078],"594":[-0.06272777620531245,-0.24617586614213896],"595":[-0.39553931611083737,-0.18469040163390416],"596":[-0.04369215106449481,0.17737365055688395],"597":[0.04450393381820883,-0.10049341491820948],"598":[-0.2568996930661604,0.012024619053847092],"599":[0.047839732417155376,-0.09564607715898243],"6":[-0.03337997921916846,0.38484917334638796],"60":[0.2398893124123535,0.10391053913422436],"600":[-0.07327983115692165,-0.05228948654317677],"601":[-0.37455679709871914,-0.1815709658960438],"602":[-0.30690512111608276,0.13482979248712187],"603":[-0.058110146451415844,-0.0932196068263187],"604":[0.0014160780152403553,-0.11466014280263942],"605":[0.2712685312171535,-0.17424689192238374],"606":[0.20861670152333925,-0.09449370942270337],"607":[-0.2788077862280626,-0.2183389413469474],"608":[-0.21244107708897325,0.36888349201953236],"609":[-0.06325587626913473,0.22091126560891336],"61":[0.16303604828853957,0.10166280576016316],"610":[0.08840987010237512,0.22932983085192266],"611":[-0.15175427057217722,-0.15330638561513804],"612":[0.3011105122334686,-0.17571529117975804],"613":[0.32767087796870037,0.28807735263863565],"614":[0.25372733323369084,-0.23320272893216823],"615":[-0.2037516803884088,-0.38838521999873876],"616":[0.15701506663601225,-0.186204708707641],"617":[0.09182312519522584,-0.05488334730333494],"618":[-0.02232682195132036,-0.23770121881819664],"619":[-0.01077966022520951,-0.28645743518081007],"62":[-0.027272696230134695,0.11381834091647915],"620":[1.0,0.29185663962131053],"621":[0.022670160584236664,0.05295651602400242],"622":[0.017081430326285403,-0.10556578809949202],"623":[-0.09527686635201006,0.0479955615155776],"624":[0.18940480927591255,-0.28333531194542755],"625":[-0.3563445711208062,0.23117948782450967],"626":[-0.1800178600055496,0.046198546747140475],"627":[0.05914592342347249,0.25246510736499295],"628":[-0.0798651987007126,0.2861642882496871],"629":[0.011713567126270233,-0.1062932820565506],"63":[-0.23303900429863578,0.13083972326097043],"630":[-0.1375066156572192,0.209573968323924],"631":[0.2679808514863579,0.14245318970890544],"632":[-0.09410616920655392,0.13456074671110285],"633":[0.2217443677349178,-0.06159344008479781],"634":[-0.28501407598840006,0.11600499327476768],"635":[-0.2863873232621496,-0.1452995606841991],"636":[-0.08701808868886692,-0.07421524995813716],"637":[-0.0640540837270883,0.2595363649329982],"638":[0.0945475109094796,-0.013466538318133643],"639":[0.06389478181817047,-0.004060380493908223],"64":[-0.34591839760735266,0.24578365946227637],"640":[0.4222269149359619,-0.21813930495036654],"641":[-0.003486804337995364,0.050828073783184935],"642":[0.01637149478360699,-0.05753320836756919],"643":[0.04613271360352386,-0.045866736932784945],"644":[0.1862439263941697,-0.20765985711712537],"645":[0.09214477399467255,0.033259079291137195],"646":[-0.00977997077324703,0.1317392678069792],"647":[0.1910221565887877,0.45302941583473694],"648":[-0.4187193261789637,0.20185438003103096],"649":[-0.09874627535869875,0.15313528617855673],"65":[0.675845639991205,0.058092657333512966],"650":[0.17624760245523455,0.17148312407948418],"651":[0.008444983476793188,0.20058272188161053],"652":[0.4734031003772985,0.026271044409709374],"653":[0.07096399251043668,0.051571046766632433],"654":[-0.051024360566634605,0.033629502177232],"655":[-0.0032014095331924872,0.0572979323979982],"656":[-0.22915437200399008,-0.18715532651909172],"657":[-0.3510203642285876,-0.03959729376949342],"658":[0.015822750613816605,0.06943059129900209],"659":[-0.16366278812257876,0.10962287761492072],"66":[0.1767770273965297,0.0378990417527071],"660":[-0.14231894246825755,0.3285825715507913],"661":[-0.07216814073024445,0.03448942422949815],"662":[0.12805780201383168,0.14047910461541377],"663":[0.3503206849597015,-0.01369610309999412],"664":[0.0776762441875354,0.14457200119041974],"665":[0.899855006801838,0.2570723693355888],"666":[0.05781377206086405,0.08981144113303809],"667":[0.15947706647851345,-0.08434043683237019],"668":[-0.24789365574216105,0.21358394658647908],"669":[-0.1798040312875038,0.014742687246009321],"67":[-0.059616785874861945,0.16308278000270962],"670":[-0.26184094883759795,0.3822124052626957],"671":[-0.36654806962184355,-0.111039086179358],"672":[0.033807731772590034,0.13478932646173078],"673":[0.2668164904109154,-0.2984528877371291],"674":[0.34750482574865776,0.21145716646188598],"675":[-0.3989676721985647,0.18441894796200584],"676":[-0.3319090636338201,0.19945319906245784],"677":[0.4340200545905431,-0.12018972923505125],"678":[0.04030976532029699,0.46732566174204004],"679":[0.08731043974941058,-0.3153180087820011],"68":[-0.005690140971728461,-0.2123060639897976],"680":[-0.050608518140015234,0.33375997501545435],"681":[-0.2014268415352663,-0.12772790752546595],"682":[0.10291301751542623,0.029221110198585355],"683":[0.40098916335799906,0.07335509710034885],"684":[-0.057605452106053556,-0.2040239193232231],"685":[-0.03141791737836697,0.21685072560796761],"686":[0.27754502878610543,0.48843775668694484],"687":[-0.13590990525036148,-0.07624682995637315],"688":[0.09141091831937007,-0.12415385788665834],"689":[0.0681508966071512,-0.05467753342902234],"69":[0.3578653909843493,-0.1335489369809955],"690":[0.044979841597103866,0.016198507963920323],"691":[0.5116087424637381,-0.3628544982656908],"692":[0.061854748228817244,-0.08725284596766435],"693":[0.12313635888365107,-0.30822989883276875],"694":[-0.10358291297902719,0.2144595412774723],"695":[0.21252996983702616,-0.012261661745320956],"696":[-0.18354615523009027,0.1932598346156308],"697":[-0.09574384308237094,0.19828837408068034],"698":[0.03718742926838797,-0.05008354234566983],"699":[0.3257241401826582,-0.34273981438822604],"7":[0.0107960269676178,-0.21872141763800734],"70":[-0.10647181199058293,-0.0077724495316340275],"700":[0.36329728841104647,-0.11701667593590451],"701":[0.11164750958351527,-0.02723021873642551],"702":[0.025316176462871303,-0.10390166497915945],"703":[-0.20816270524761613,0.16829908048797673],"704":[0.012953857371073359,0.1441163561653347],"705":[0.014106358318587883,-0.1060032754235908],"706":[-0.03155069162840058,-0.15356655726024915],"707":[0.030467932238341152,0.04273813684150781],"708":[0.0294229010077065,-0.1028164342684427],"709":[-0.021825956963592144,-0.5005570163303666],"71":[0.132257083708266,0.19655365269901412],"710":[0.16315228059583015,0.13008133653921022],"711":[0.14273003383783323,0.035251731779984315],"712":[-0.08949886596367469,0.30743528478442916],"713":[-0.26958815712829387,0.18416741492563066],"714":[0.1662526825614265,0.09444887605599599],"715":[-0.2540851098406604,0.040743985876963075],"716":[-0.035081995506655174,0.23036908070305434],"717":[-0.4131958214657618,0.05408238818028318],"718":[0.18839812887503055,0.22214625753990508],"719":[0.09741484337218985,-0.0442079889643566],"72":[0.03279485936863583,-0.37927651124262657],"720":[0.12017086362607736,-0.18559923265683398],"721":[0.10699099161009494,-0.0003208990408930191],"722":[-0.2365243425144125,0.1045388280854408],"723":[-0.054036147317364565,-0.027428762535989883],"724":[-0.1663911229529403,0.2978851772100795],"725":[0.23463802051301638,0.008557402599465509],"726":[0.19745079697080448,0.0011494960216603353],"727":[-0.050558268081380746,0.08300897935044395],"728":[0.08004909125012592,0.46119867480063725],"729":[-0.1610211234994968,0.029542545538289926],"73":[-0.18835577388356597,-0.2187432544592495],"730":[-0.032221767009303556,0.10006436960534344],"731":[-0.2389734447403135,0.33701419695060647],"732":[0.6884884177517798,-0.10436896114120896],"733":[-0.23031656041187729,0.32336791754333555],"734":[-0.11068378584032099,-0.042464778742194814],"735":[-0.07282112623107391,0.092209613688309],"736":[-0.2691243016349912,0.3987763571749597],"737":[0.09360990265574018,-0.0938985099512004],"738":[-0.14211151566285024,-0.20586669961608722],"739":[0.13144896117285,-0.03600884954239523],"74":[0.24619645463551026,-0.20399000256601274],"740":[0.3466554496476829,-0.1642039805325878],"741":[-0.1535784939208862,-0.3228198709563802],"742":[0.3923601032297386,-0.27819471914640104],"743":[-0.4302433512818693,-0.029472645783915917],"744":[-0.1441399749893144,0.02283574460670628],"745":[-0.3474225997371711,0.16638629824419798],"746":[0.337095906814728,0.2290352077475267],"747":[-0.08533233025837525,-0.06430350992680357],"748":[0.05768601370485088,0.07210792533149865],"749":[-0.32852043929166974,-0.2302977968374564],"75":[0.34324194575451444,0.023427059117341435],"750":[0.1474097384215113,0.28828681433006986],"751":[-0.3190182797494654,0.33581361185763275],"752":[0.06989323492476754,-0.07332760515909358],"753":[0.1443950394758534,-0.10588797893111375],"754":[0.29975060773531353,-0.031096731293412467],"755":[0.4122910705603696,0.013631404710026369],"756":[0.21860856715944324,0.5764669862205489],"757":[0.05624425006172826,-0.09096590613221461],"758":[-0.009718348609160626,0.18577465326834053],"759":[0.326848400556106,-0.3278362348970187],"76":[-0.34220405739952886,0.07518816204258229],"760":[0.3736166608406993,0.36632481440063125],"761":[0.23762597221248316,-0.47304654055067086],"762":[0.018232405146941192,0.009737066389640961],"763":[-0.1517023397203695,-0.1869597916289797],"764":[-0.06796319178682629,0.49968219489379845],"765":[0.09391998113074933,-0.051212374547096935],"766":[-0.09228860389659911,-0.05380036086415925],"767":[-0.18027124919718499,0.28274754898229854],"768":[-0.2668082751774379,-0.04679548213659335],"769":[0.6973722382128802,0.17123664884909953],"77":[-0.1586831505692483,-0.39786921833879424],"770":[-0.20428706596690802,0.018042386899085567],"771":[-0.13513754432758854,0.11515887995606512],"772":[0.21024715519598458,0.21095710863392608],"773":[-0.09056117808228474,0.05636891827497719],"774":[0.02567187164886983,0.10423676230756347],"775":[-0.023612614340332676,0.17308998327238267],"776":[-0.28035149616778604,0.16573916590225587],"777":[0.23408710381674555,-0.04070532414914073],"778":[0.06493637435271844,-0.1116223042518963],"779":[0.20507070885248818,0.41879781698831825],"78":[-0.01711878454198226,-0.19601978016734692],"780":[-0.09685010134508247,0.04474642898285783],"781":[0.2804266703850131,0.09424070071067214],"782":[-0.008754603754078345,0.01921192978041602],"783":[-0.12447628533080281,0.33577392326522737],"784":[0.06497456060990507,-0.07072630964044298],"785":[0.6447701103368254,0.3006168224627005],"786":[0.13304557210375959,-0.2891256990051828],"787":[-0.12343337266544543,0.28763522011559317],"788":[-0.0607961627309056,0.09805309212885226],"789":[0.10657463369043195,-0.009421113792445035],"79":[0.25301568039522976,-0.13479507947098857],"790":[0.2511282103990176,0.18698413699933455],"791":[-0.050286303330504274,0.09405128336422056],"792":[-0.12686758548171875,0.5023793472742094],"793":[-0.00024327708025204597,-0.2731201929322984],"794":[-0.15887298300166516,-0.26228826125220966],"795":[-0.22527718599342897,0.5111552421730371],"796":[-0.4712805422543342,0.1145382078422749],"797":[0.08510685348931664,-0.3672780319773791],"798":[-0.02117435006738318,0.4928884182173429],"799":[-0.061021942492422425,0.05962881995503521],"8":[-0.13888653163739534,0.26109417411883873],"80":[0.10698009779218379,-0.0015603416553539998],"800":[0.3659906957178273,-0.3291397758093268],"801":[-0.2862372366977102,0.15633234138498217],"802":[-0.14991258007134395,0.10000868563649691],"803":[0.6715792697789701,0.24224949490913616],"804":[0.3815953816836678,-0.04003973991402396],"805":[0.12295851638973976,0.2361249044850398],"806":[0.08499999420566909,-0.2960024329764597],"807":[0.13079168115178888,0.32233906244166666],"808":[0.06618115078117649,-0.08402434679514238],"809":[0.5802005736247976,0.1257637378749353],"81":[-0.002808934375672415,-0.036466495193288144],"810":[0.004222251072675973,0.3224938005313602],"811":[0.09311018467512393,-0.16759979530288524],"812":[-0.012790773907836074,0.10588856589019613],"813":[0.13577190306971437,-0.013746834471217932],"814":[0.08846363054252077,-0.21104884976493635],"815":[-0.2482990730675972,-0.05040118335507661],"816":[-0.09009673385322145,-0.05741195441724424],"817":[0.06041096296730996,0.4646206792286623],"818":[0.12439596166210252,0.2844646744442331],"819":[-0.02268212730419169,0.016256498198019987],"82":[0.032810228537531023,-0.09329587117634411],"820":[0.0035263721911733916,0.24439862999640036],"821":[0.4539722046536577,-0.05909638779616772],"822":[-0.37700251388472045,-0.4683884801303473],"823":[0.10386979175048586,0.3343548510334919],"824":[-0.1007190501069663,-0.16741906410245994],"825":[0.1316163773473448,-0.3544847192792242],"826":[-0.019948868095257956,-0.10503471296469664],"827":[-0.24837495407435342,0.15622780101909442],"828":[-0.1639828584937306,-0.0902283896709241],"829":[0.06923605500190136,0.41094428812367634],"83":[0.32312885056444623,-0.6838450211498472],"830":[0.26233910900076274,0.012435825312277014],"831":[0.20811633213677025,0.05007496670094529],"832":[-0.05188499230943988,0.09317761979793872],"833":[-0.45260172453195147,0.168192080630439],"834":[-0.09837484147200042,-0.05004686608080813],"835":[-0.11887955111097896,-0.3328805975044875],"836":[-0.08336120688627209,-0.12940193323418034],"837":[0.2928134885756822,-0.13468318401299098],"838":[0.17405180249749375,-0.11708815481775885],"839":[-0.16173881726686465,0.3922039931087709],"84":[0.23421835710280847,0.19216636867652295],"840":[-0.3148689830880817,-0.07807362534285611],"841":[0.1057277305810752,0.016360883342727704],"842":[-0.3026102642457443,0.225542046538406],"843":[0.5607372407242801,0.20253868108089756],"844":[-0.402715694684728,0.490876671472616],"845":[-0.07756314714261496,-0.0735166861872198],"846":[-0.29523037469257796,-0.0010940196877633715],"847":[0.0434897717840471,-0.09769548726974486],"848":[-0.17199698858420326,0.48138866755744214],"849":[-0.06912316098120551,0.36043463344788934],"85":[0.0311144223863855,-0.1367407527425867],"850":[0.034010678023288485,-0.5193235450909798],"851":[0.011752472087389242,-0.2793238173813741],"852":[0.15056873780552557,0.4356417567857019],"853":[0.06804362293741932,0.12637545710085343],"854":[-0.050484163772278226,0.31680601557602095],"855":[0.1510997024196965,0.06818234394035297],"856":[0.03262291454286753,0.3177782084594725],"857":[-0.1866858709081468,-0.0007936045959233435],"858":[0.5860414339326302,-0.4054092455118868],"859":[0.5070161758516272,-0.31587216398360446],"86":[-0.04502126402963835,-0.10297160900471672],"860":[0.13077289892568164,0.1742516738472652],"861":[0.027612831682354802,-0.37306078955238636],"862":[0.08630301937751088,0.0038833916091959514],"863":[0.17496955634302624,-0.041884293419834503],"864":[-0.04449743138739828,-0.04617976092676409],"865":[-0.3834408371962252,0.007055971356342797],"866":[0.06554582359988445,0.07124364339750042],"867":[0.21234853913396662,-0.4625574533929204],"868":[0.10857372940052458,-0.2621418506017115],"869":[0.07679123199642802,0.07433250806373459],"87":[-0.3237198460540099,0.4068830310547809],"870":[-0.1615946696850445,0.15299785012446687],"871":[-0.00793638157799957,-0.0932775687528558],"872":[0.1064581453537595,-0.01065508514387757],"873":[-0.4000161786571816,-0.13362192731330605],"874":[0.11799388698570365,-0.36828467145482036],"875":[-0.07701195345485333,0.07288775113188974],"876":[-0.04576362726844988,0.02945536701207052],"877":[-0.10918957862413031,-0.04619679661753311],"878":[-0.0710682597193206,-0.03664802548671042],"879":[0.43085594129232174,0.3237947715214794],"88":[0.18699217752044195,0.08527473091743466],"880":[0.05852331985131315,-0.21186411789730922],"881":[0.40413534826839326,-0.24046163664237605],"882":[0.8000263695236705,0.2162434797225882],"883":[0.2136860493973494,0.07701868847950703],"884":[0.26344218108726036,0.17079758810037948],"885":[0.1913336325391852,0.05387908569960431],"886":[-0.11252490302074018,0.4000728211173584],"887":[-0.0026990153093151325,0.15721438929906714],"888":[-0.006393778383310912,-0.2566458892018022],"889":[0.26338607207095915,-0.035224108467083314],"89":[-0.2815667887892049,-0.2481378731054275],"890":[0.048558148896283515,-0.12708121536699507],"891":[-0.047931553269671634,-0.0024626426670153116],"892":[0.17245065934319473,0.14432879647130442],"893":[-0.22543035393187083,0.3739695025032535],"894":[-0.012209813079994846,-0.22550231410489457],"895":[-0.31244455496288315,0.26290465339503744],"896":[-0.2185688512058821,0.4026872920689305],"897":[-0.011097509400328297,0.3269103465904988],"898":[-0.1235877530052389,-0.156061845469166],"899":[0.3555352677011988,0.1790763877420128],"9":[-0.11529595633173376,0.22865986687109766],"90":[-0.5813265455257548,0.055769718871968146],"900":[-0.2669332757857827,-0.23013235296408835],"901":[0.013001839544004617,0.26922876089164627],"902":[0.029799018483689838,0.3607466213346271],"903":[0.12125498522745955,-0.23645459968104127],"904":[0.1474116716746603,0.2588347675172069],"905":[0.10801876093758465,-0.30521542564594867],"906":[0.10471218496874311,-0.021929482293094178],"907":[-0.10605166629820817,0.011993714566825103],"908":[-0.4050960842989826,-0.16401476699261627],"909":[0.5540073700701402,-0.1525191349497097],"91":[-0.1970475621941759,-0.07396984392284933],"910":[0.026046482344794612,-0.23537434144440136],"911":[0.05933665445373853,-0.08898182880646366],"912":[0.08587660305541125,-0.030155987267999385],"913":[0.10515045233049694,0.0657033428866188],"914":[-0.2694714349981414,0.22606337879222846],"915":[0.09792086477144221,-0.043076825100011824],"916":[0.09025012311591564,0.012681697451492575],"917":[-0.2934367279818395,-0.1345455632094419],"918":[0.04135265558828085,0.09841384431245728],"919":[-0.1358976658223198,0.14625530242600027],"92":[-0.0241551557638911,0.3561236300085287],"920":[-0.021205875585206316,-0.38150358597636747],"921":[-0.15922638257909794,0.3522270177369963],"922":[-0.2180392417027469,0.1316183162683151],"923":[-0.017574572225712782,-0.10546098909037195],"924":[-0.05824479437767531,-0.272476232251686],"925":[0.20203647046596065,0.21365547036180602],"926":[0.16259509669236433,-0.24272024010466084],"927":[-0.2337986678429152,-0.2013895100949264],"928":[0.06735691842854032,0.09955308709870214],"929":[-0.184266508954415,-0.08926275018643515],"93":[-0.13191076317443154,0.22151820096263453],"930":[-0.11773958764813341,0.09660235184924151],"931":[-0.43271687148423543,-0.4528212836568573],"932":[0.31314513073754235,0.06682057117944765],"933":[0.10662756058610245,-0.008803674948706475],"934":[0.0016092248959451378,0.10665593003968411],"935":[-0.1787465747570977,0.0554764996250744],"936":[-0.010028069567567861,0.16924526726194003],"937":[0.02352543611610137,-0.07645425980862935],"938":[-0.024313606789233493,-0.09629429625320118],"939":[0.09899759940937829,0.040528933497320396],"94":[-0.0015683907713281,0.2596727021278472],"940":[-0.2426543185270079,0.10056359736188523],"941":[-0.2843074817982132,-0.5524218359409132],"942":[-0.017787148265197533,-0.08484150894690176],"943":[0.24370498934441426,0.014416611265590826],"944":[-0.252547781273767,-0.020310173472591054],"945":[-0.13756821569126013,0.3641162002773135],"946":[-0.013273527878237358,0.029254506958034433],"947":[0.14535916488725467,-0.30679018375640577],"948":[0.027647800933316057,-0.18986871476753905],"949":[-0.3103786971598341,-0.5420810821421614],"95":[-0.28464171995079174,-0.049532188596394765],"950":[-0.2342014846698496,-0.13716659728424999],"951":[-0.4071235902153057,0.28138818234600776],"952":[0.07563614618246259,-0.07564152431387992],"953":[-0.1507137957141695,0.42257082540977475],"954":[-0.0678944690553463,-0.0799366581432031],"955":[0.1731109914355066,0.2213823686428152],"956":[0.11475107303453738,0.4274885160114476],"957":[0.2717984287636247,0.0751186891580841],"958":[-0.11989703186677761,0.007739091518451122],"959":[0.17071152402675782,0.44628544163415346],"96":[0.0825159948938277,0.14354796279082976],"960":[0.24232831423945755,0.031048890996617267],"961":[-0.24269249844711127,-0.3178473126989009],"962":[0.08492666954640099,0.051130361584350484],"963":[0.021893288650923427,0.2309953617361218],"964":[-0.052132764364049566,0.0941183006365795],"965":[0.5298967543967104,0.25716855098831776],"966":[0.06990672528976463,-0.08095720662011374],"967":[0.05440048798396927,0.16469741321174086],"968":[0.14896149353576077,0.04488496561506336],"969":[0.21648578333854546,-0.14227143638584264],"97":[-0.4206174990587221,0.24167863268838874],"970":[0.11395218582092419,0.38651735974426826],"971":[-0.013573741998643741,0.07279291931434234],"972":[0.038895236567186645,0.3848029895854472],"973":[0.26540847250056193,-0.12607648634941335],"974":[0.17284622649254194,0.23422461483370366],"975":[-0.132466554335013,0.30211455794565745],"976":[0.3200653754129109,0.3482429385507593],"977":[-0.08810178151172257,0.11821700088549515],"978":[0.09295482110075197,0.24646331100438437],"979":[0.09559267903796682,-0.04801825701955219],"98":[0.03392784790847301,0.2553023153241063],"980":[0.2180408100213104,-0.07219566350499158],"981":[-0.17472268855754003,-0.02001683095873891],"982":[-0.10293304035672221,0.09174820926336126],"983":[-0.11699148175998779,0.2965526887743119],"984":[0.017574231867032674,-0.011592570638881956],"985":[-0.33096835641273586,-0.2131810867981237],"986":[0.09234652144287298,0.001550876999370431],"987":[-0.03913001714753368,0.20704071886776435],"988":[0.10506848150493642,-0.16207577565371603],"989":[-0.2544555750898831,0.3222842005340127],"99":[-0.10642573551120539,-0.008391358564518421],"990":[-0.09416381847464592,0.05013815951390944],"991":[-0.27176051785207445,-0.5569944495996195],"992":[-0.25576167829361485,0.2012841583998923],"993":[-0.17725659788615733,-0.19136308828621226],"994":[-0.36680101891274725,-0.17078125233955582],"995":[-0.062047537649121076,-0.32329182566500575],"996":[0.09804190221856436,0.575417954441486],"997":[-0.19536433656701868,-0.020176251793562555],"998":[0.07722272906486825,0.07388641756178527],"999":[0.3967791591937732,0.33838351636613767]}},"id":"10781","type":"StaticLayoutProvider"},{"attributes":{},"id":"10806","type":"BasicTickFormatter"},{"attributes":{},"id":"10768","type":"ResetTool"},{"attributes":{"callback":null,"data":{"community":{"__ndarray__":"BQAAAFsAAAABAAAAAwAAAAAAAAADAAAAEQAAAAEAAAAKAAAAEgAAAA8AAAAAAAAADQAAAAMAAAADAAAAAwAAAAcAAAAGAAAAEQAAAIoAAAACAAAACgAAAAcAAAADAAAABwAAAAEAAAAAAAAAIAAAABIAAAACAAAAEgAAAAQAAABzAAAACwAAAAAAAAAhAAAAJwAAAAoAAAAEAAAAAAAAAAEAAAAiAAAAAwAAAAEAAAABAAAAIwAAAAQAAAAHAAAAEQAAAC8AAACUAAAARgAAAAAAAAACAAAAAwAAAAcAAAARAAAAkgAAAAMAAAADAAAAAAAAAAMAAAADAAAAAgAAAAcAAAAIAAAACwAAAAMAAAAEAAAABgAAADkAAAADAAAAEQAAAAAAAAAAAAAAAAAAAAMAAAAEAAAABAAAAAYAAACaAAAAAwAAAAMAAAAyAAAABQAAAAEAAAAAAAAABwAAABEAAAACAAAABAAAAAMAAAASAAAAEQAAABEAAAACAAAAAwAAAAcAAAASAAAAOgAAAAcAAAADAAAAAAAAAAMAAAADAAAACwAAAAcAAAAIAAAAEgAAAA0AAAAiAAAAIgAAAAcAAAAAAAAABQAAAAEAAAAEAAAABwAAADIAAAAAAAAABAAAAAsAAAADAAAAAwAAABwAAABNAAAAAAAAAAYAAAARAAAAZwAAAEcAAAAAAAAABwAAAAEAAAAHAAAABAAAAAYAAAASAAAAAwAAAAIAAAAHAAAAVgAAAAMAAAAAAAAAAgAAAAUAAAADAAAAAwAAACIAAAACAAAACAAAAAQAAAABAAAAEQAAAAAAAABKAAAAlwAAAAMAAAAHAAAAAwAAAAMAAACLAAAACwAAAA0AAAAEAAAAAAAAAAcAAAABAAAAAQAAAAYAAAACAAAABAAAAIAAAAADAAAAAAAAAAUAAAByAAAABgAAAAAAAAAIAAAABQAAAAMAAAADAAAABgAAAAsAAAAKAAAAFwAAAAMAAABgAAAAAgAAAGIAAAArAAAACwAAAAAAAAALAAAABQAAAAcAAAAFAAAACwAAABIAAACZAAAANAAAAAMAAAABAAAAAQAAAD0AAAAAAAAAOAAAACAAAAAKAAAAAwAAAAgAAABNAAAAAgAAAAMAAAAHAAAAAAAAAAMAAAADAAAAEgAAAAQAAAAKAAAAAwAAAAoAAAADAAAAAQAAABoAAAABAAAAAQAAAA0AAAAEAAAAYQAAAAAAAAAIAAAATQAAAA0AAAAAAAAAAwAAAAMAAAAGAAAAAAAAAAQAAABQAAAAJQAAAAUAAAAdAAAAAQAAAAAAAAAEAAAAAQAAAA0AAAABAAAABwAAAAMAAAAHAAAAmAAAAAMAAAABAAAAVwAAAAcAAAABAAAABAAAAAQAAAAIAAAACAAAAAMAAAAIAAAAIAAAAAAAAAADAAAABAAAAAMAAAABAAAAAwAAABIAAAADAAAAAwAAABEAAAA1AAAAAwAAAAoAAAADAAAAEgAAAHoAAAAiAAAAAAAAAAIAAAAFAAAAGwAAAEQAAAALAAAAVAAAAAQAAAASAAAAAwAAAAEAAAAiAAAAAwAAAAYAAAADAAAAMgAAAAAAAAABAAAAEgAAABIAAAABAAAAAwAAAAcAAAAAAAAADQAAAAUAAAAEAAAAAgAAAAMAAAASAAAAJAAAAAQAAABPAAAAAQAAAAEAAAAAAAAABgAAAAYAAAAHAAAAEgAAAAMAAABpAAAAAAAAAAYAAAAIAAAAgQAAAAQAAABZAAAAEQAAAAcAAAAHAAAATQAAAAcAAAAKAAAAAQAAAGwAAAALAAAABAAAAAMAAAADAAAAAwAAAFEAAAAYAAAAAAAAAIMAAACbAAAAAgAAAAEAAAADAAAAAwAAAAMAAAAAAAAAAAAAAEsAAAANAAAACgAAAAgAAAAFAAAACgAAAIwAAAAEAAAAAgAAAAQAAAALAAAABQAAAAAAAAAAAAAAAgAAABIAAAB8AAAABwAAAAMAAAAyAAAAPwAAAAcAAAABAAAAIAAAAAcAAAAEAAAAAgAAAAoAAABFAAAAAwAAAAcAAAACAAAAAQAAACIAAAADAAAAPgAAAAgAAAASAAAAKAAAAAMAAAAFAAAACgAAAAUAAAADAAAAAwAAABEAAAABAAAAAwAAAAMAAAAAAAAAAAAAAE4AAAADAAAACAAAAC0AAACGAAAACgAAAAEAAAABAAAALwAAAAQAAAABAAAACAAAAGoAAAADAAAAAwAAAAAAAAAgAAAABwAAAAAAAAAIAAAAEQAAAAMAAAAiAAAAIgAAAF8AAAADAAAAAwAAABIAAAAAAAAABAAAAH4AAAAGAAAABgAAAAYAAAAIAAAAAgAAAA0AAAAAAAAAAQAAAI4AAAADAAAAAwAAAAcAAAAGAAAAAQAAABEAAAAAAAAACAAAACEAAAAHAAAABQAAAAoAAAAIAAAAAgAAABEAAAADAAAABwAAAA8AAAADAAAAAwAAAAcAAAARAAAABwAAAAMAAAAiAAAAVQAAADwAAAADAAAAEgAAAAgAAAACAAAAAwAAAAMAAAAKAAAAAwAAAAcAAAAHAAAAAQAAAAMAAAAEAAAAEgAAAAQAAAAEAAAAEgAAAAYAAAA7AAAABAAAAAEAAAADAAAAIgAAAAcAAAADAAAAAwAAAAMAAAADAAAABwAAAAgAAAAAAAAAAAAAAHQAAAASAAAAAAAAAAMAAAAEAAAABwAAAAQAAAAGAAAACAAAAAoAAAAHAAAABwAAAAcAAAAHAAAAAwAAAA0AAAAEAAAAAAAAAAQAAAAAAAAAAQAAAAEAAAAHAAAAEQAAAAcAAAACAAAAbwAAAAcAAAAAAAAABAAAAB8AAAAIAAAAAAAAAAEAAAAMAAAABAAAAAMAAAAKAAAABwAAAHcAAAADAAAAAQAAAFIAAAAFAAAAIgAAAA8AAAABAAAAAgAAAAcAAABwAAAAEgAAABIAAAAHAAAABAAAAAAAAAAGAAAABgAAAAcAAAASAAAABwAAABEAAAAEAAAACgAAAAMAAAASAAAABAAAAAYAAAABAAAAAQAAAJEAAAABAAAABwAAAFwAAAASAAAAAwAAACIAAAADAAAABAAAAAQAAACNAAAABQAAAAAAAAARAAAAEgAAAAcAAABYAAAAAAAAAAAAAAADAAAAUwAAAA0AAABuAAAAAwAAAAgAAAAHAAAAUwAAAAMAAAAAAAAABAAAAAAAAAACAAAAEgAAABEAAAAEAAAABQAAAAoAAAABAAAABAAAAAMAAACCAAAABAAAAAQAAAAIAAAAAwAAAGYAAAAxAAAAAQAAAAcAAAADAAAAEQAAAAcAAABkAAAAAwAAAAsAAAALAAAAAAAAABEAAAANAAAAAwAAAAMAAAAYAAAAAwAAAAEAAAAgAAAAIAAAACAAAAABAAAAIAAAAAMAAAALAAAABwAAABEAAAADAAAAAwAAAAgAAAADAAAALAAAAAMAAAANAAAABAAAAAMAAAADAAAAEQAAACAAAAADAAAACAAAABIAAAAIAAAAFgAAAAsAAAAHAAAAAwAAAAcAAAAAAAAAEgAAAAEAAAAFAAAABwAAAAcAAAACAAAACgAAAAAAAAASAAAACAAAAA4AAAAjAAAABAAAAAMAAAARAAAADQAAAAAAAAAAAAAAAwAAAAEAAAB4AAAAAAAAAA8AAAALAAAAEgAAAAcAAAADAAAAAQAAAAYAAAAAAAAAaAAAAAcAAAASAAAAZQAAAAMAAAADAAAAawAAAAQAAAADAAAABQAAAAcAAAAHAAAAAwAAAAMAAAADAAAAAgAAAAsAAACHAAAAAQAAAJwAAAAHAAAAAwAAAAcAAAADAAAAAwAAAAMAAAAKAAAAAwAAAAsAAAAHAAAACAAAAAcAAABKAAAAJAAAAAcAAAAAAAAABQAAAAIAAAAGAAAAEQAAAAEAAAAFAAAADQAAAAcAAAAIAAAAQwAAAAMAAAAFAAAAEgAAAAcAAAADAAAAAQAAAAIAAAAAAAAACwAAAHEAAAADAAAAAQAAAAgAAAAyAAAAAwAAAAAAAAAKAAAAhAAAAEAAAAAHAAAABAAAAAgAAAAAAAAAAwAAAAMAAAAuAAAAAwAAAAMAAAAHAAAAAAAAAAAAAAAKAAAAMwAAAAsAAAAFAAAACgAAAFAAAAAIAAAABAAAAAcAAAADAAAAlQAAAA8AAAApAAAABgAAAAAAAAAEAAAABwAAAAcAAAABAAAACwAAACAAAAABAAAABwAAAAMAAAAIAAAACAAAABIAAAABAAAAAwAAAHkAAAAIAAAAEgAAAAAAAAAmAAAAAAAAAAEAAAANAAAAQgAAAAoAAAAGAAAABQAAABIAAAAIAAAAIgAAAAoAAAAFAAAAAQAAAF0AAAAHAAAAEQAAABIAAAADAAAAAwAAACoAAAAHAAAACgAAAAIAAAAEAAAAAQAAAAAAAAAHAAAADQAAAAkAAAAHAAAACAAAAAcAAABIAAAAAwAAAG0AAAAKAAAAEgAAABEAAAAEAAAAAwAAAAMAAAASAAAAAwAAABIAAAAAAAAACAAAAAgAAAADAAAAAQAAAAoAAAAIAAAAIAAAAAAAAAADAAAAAQAAAAEAAAAVAAAABQAAAAMAAACTAAAACAAAAAEAAAADAAAABQAAAEwAAAADAAAACgAAAAAAAAAIAAAACAAAAAIAAAADAAAACgAAAAYAAAADAAAAAAAAAAIAAAAAAAAAAwAAAAMAAAAHAAAAAAAAAAcAAAAHAAAACwAAAAQAAAAKAAAAAAAAAAMAAAALAAAAAQAAABIAAAABAAAAkAAAADYAAAAAAAAACAAAAAAAAAB1AAAAAwAAAAMAAAAHAAAAiQAAAAMAAAANAAAAGQAAAAcAAAAEAAAABwAAAAYAAABeAAAAAAAAAA8AAAAAAAAACwAAAAMAAAAAAAAAAwAAACIAAAAIAAAAlgAAAB4AAAALAAAAEgAAAAUAAAAEAAAAEAAAAAcAAAAiAAAACgAAAAAAAAANAAAAEgAAAAoAAAABAAAAAwAAACIAAAAAAAAABwAAAH0AAAAHAAAAAAAAAAAAAAAKAAAAAwAAAAMAAAASAAAACAAAAAsAAAACAAAAEgAAAAMAAAAIAAAAewAAAAMAAAAGAAAAAAAAABIAAAADAAAAEgAAAAIAAAADAAAABwAAAAUAAAADAAAAAwAAAIUAAAAEAAAABAAAAAoAAAARAAAAEQAAAAAAAAAgAAAAAwAAAAAAAAAHAAAAMAAAACIAAAAHAAAABQAAAAQAAAAAAAAABwAAAAsAAAAUAAAACAAAAEwAAAADAAAADwAAAAQAAAASAAAAWgAAAAMAAAAPAAAAiAAAAAgAAABBAAAACgAAAA8AAAADAAAABgAAAAMAAAAKAAAAEgAAAAAAAAATAAAASQAAAAcAAAANAAAABwAAABEAAAANAAAABwAAAAcAAAALAAAADwAAAAMAAACPAAAANwAAAAMAAAALAAAAAQAAAAEAAAABAAAAAQAAAAMAAAALAAAAAwAAAAQAAAAEAAAAAQAAAAsAAAAAAAAADwAAAAcAAAADAAAABAAAAAQAAAASAAAAAQAAAAUAAAADAAAADwAAACwAAAASAAAACgAAAAgAAAACAAAABwAAABIAAAARAAAAAgAAABIAAAAEAAAAIAAAABIAAAAKAAAAAwAAAAMAAAARAAAABAAAAAEAAAAIAAAABQAAAAcAAAAAAAAACgAAAAMAAAAKAAAAAwAAAAUAAAAEAAAACgAAAAcAAAAPAAAABAAAAAcAAAABAAAAAwAAAAEAAAADAAAADQAAAA0AAAALAAAAAwAAABEAAAAHAAAAAAAAAHYAAAACAAAAAQAAAAUAAAAGAAAABAAAABEAAAARAAAAAwAAAAcAAAB/AAAAAQAAAA0AAAAFAAAAYwAAAAcAAAA=","dtype":"int32","shape":[1118]},"community_str__":["5","91","1","3","0","3","17","1","10","18","15","0","13","3","3","3","7","6","17","138","2","10","7","3","7","1","0","32","18","2","18","4","115","11","0","33","39","10","4","0","1","34","3","1","1","35","4","7","17","47","148","70","0","2","3","7","17","146","3","3","0","3","3","2","7","8","11","3","4","6","57","3","17","0","0","0","3","4","4","6","154","3","3","50","5","1","0","7","17","2","4","3","18","17","17","2","3","7","18","58","7","3","0","3","3","11","7","8","18","13","34","34","7","0","5","1","4","7","50","0","4","11","3","3","28","77","0","6","17","103","71","0","7","1","7","4","6","18","3","2","7","86","3","0","2","5","3","3","34","2","8","4","1","17","0","74","151","3","7","3","3","139","11","13","4","0","7","1","1","6","2","4","128","3","0","5","114","6","0","8","5","3","3","6","11","10","23","3","96","2","98","43","11","0","11","5","7","5","11","18","153","52","3","1","1","61","0","56","32","10","3","8","77","2","3","7","0","3","3","18","4","10","3","10","3","1","26","1","1","13","4","97","0","8","77","13","0","3","3","6","0","4","80","37","5","29","1","0","4","1","13","1","7","3","7","152","3","1","87","7","1","4","4","8","8","3","8","32","0","3","4","3","1","3","18","3","3","17","53","3","10","3","18","122","34","0","2","5","27","68","11","84","4","18","3","1","34","3","6","3","50","0","1","18","18","1","3","7","0","13","5","4","2","3","18","36","4","79","1","1","0","6","6","7","18","3","105","0","6","8","129","4","89","17","7","7","77","7","10","1","108","11","4","3","3","3","81","24","0","131","155","2","1","3","3","3","0","0","75","13","10","8","5","10","140","4","2","4","11","5","0","0","2","18","124","7","3","50","63","7","1","32","7","4","2","10","69","3","7","2","1","34","3","62","8","18","40","3","5","10","5","3","3","17","1","3","3","0","0","78","3","8","45","134","10","1","1","47","4","1","8","106","3","3","0","32","7","0","8","17","3","34","34","95","3","3","18","0","4","126","6","6","6","8","2","13","0","1","142","3","3","7","6","1","17","0","8","33","7","5","10","8","2","17","3","7","15","3","3","7","17","7","3","34","85","60","3","18","8","2","3","3","10","3","7","7","1","3","4","18","4","4","18","6","59","4","1","3","34","7","3","3","3","3","7","8","0","0","116","18","0","3","4","7","4","6","8","10","7","7","7","7","3","13","4","0","4","0","1","1","7","17","7","2","111","7","0","4","31","8","0","1","12","4","3","10","7","119","3","1","82","5","34","15","1","2","7","112","18","18","7","4","0","6","6","7","18","7","17","4","10","3","18","4","6","1","1","145","1","7","92","18","3","34","3","4","4","141","5","0","17","18","7","88","0","0","3","83","13","110","3","8","7","83","3","0","4","0","2","18","17","4","5","10","1","4","3","130","4","4","8","3","102","49","1","7","3","17","7","100","3","11","11","0","17","13","3","3","24","3","1","32","32","32","1","32","3","11","7","17","3","3","8","3","44","3","13","4","3","3","17","32","3","8","18","8","22","11","7","3","7","0","18","1","5","7","7","2","10","0","18","8","14","35","4","3","17","13","0","0","3","1","120","0","15","11","18","7","3","1","6","0","104","7","18","101","3","3","107","4","3","5","7","7","3","3","3","2","11","135","1","156","7","3","7","3","3","3","10","3","11","7","8","7","74","36","7","0","5","2","6","17","1","5","13","7","8","67","3","5","18","7","3","1","2","0","11","113","3","1","8","50","3","0","10","132","64","7","4","8","0","3","3","46","3","3","7","0","0","10","51","11","5","10","80","8","4","7","3","149","15","41","6","0","4","7","7","1","11","32","1","7","3","8","8","18","1","3","121","8","18","0","38","0","1","13","66","10","6","5","18","8","34","10","5","1","93","7","17","18","3","3","42","7","10","2","4","1","0","7","13","9","7","8","7","72","3","109","10","18","17","4","3","3","18","3","18","0","8","8","3","1","10","8","32","0","3","1","1","21","5","3","147","8","1","3","5","76","3","10","0","8","8","2","3","10","6","3","0","2","0","3","3","7","0","7","7","11","4","10","0","3","11","1","18","1","144","54","0","8","0","117","3","3","7","137","3","13","25","7","4","7","6","94","0","15","0","11","3","0","3","34","8","150","30","11","18","5","4","16","7","34","10","0","13","18","10","1","3","34","0","7","125","7","0","0","10","3","3","18","8","11","2","18","3","8","123","3","6","0","18","3","18","2","3","7","5","3","3","133","4","4","10","17","17","0","32","3","0","7","48","34","7","5","4","0","7","11","20","8","76","3","15","4","18","90","3","15","136","8","65","10","15","3","6","3","10","18","0","19","73","7","13","7","17","13","7","7","11","15","3","143","55","3","11","1","1","1","1","3","11","3","4","4","1","11","0","15","7","3","4","4","18","1","5","3","15","44","18","10","8","2","7","18","17","2","18","4","32","18","10","3","3","17","4","1","8","5","7","0","10","3","10","3","5","4","10","7","15","4","7","1","3","1","3","13","13","11","3","17","7","0","118","2","1","5","6","4","17","17","3","7","127","1","13","5","99","7"],"index":{"__ndarray__":"AAAAAAEAAAACAAAAAwAAAAQAAAAFAAAABgAAAAcAAAAIAAAACQAAAAoAAAALAAAADAAAAA0AAAAOAAAADwAAABAAAAARAAAAEgAAABMAAAAUAAAAFQAAABYAAAAXAAAAGAAAABkAAAAaAAAAGwAAABwAAAAdAAAAHgAAAB8AAAAgAAAAIQAAACIAAAAjAAAAJAAAACUAAAAmAAAAJwAAACgAAAApAAAAKgAAACsAAAAsAAAALQAAAC4AAAAvAAAAMAAAADEAAAAyAAAAMwAAADQAAAA1AAAANgAAADcAAAA4AAAAOQAAADoAAAA7AAAAPAAAAD0AAAA+AAAAPwAAAEAAAABBAAAAQgAAAEMAAABEAAAARQAAAEYAAABHAAAASAAAAEkAAABKAAAASwAAAEwAAABNAAAATgAAAE8AAABQAAAAUQAAAFIAAABTAAAAVAAAAFUAAABWAAAAVwAAAFgAAABZAAAAWgAAAFsAAABcAAAAXQAAAF4AAABfAAAAYAAAAGEAAABiAAAAYwAAAGQAAABlAAAAZgAAAGcAAABoAAAAaQAAAGoAAABrAAAAbAAAAG0AAABuAAAAbwAAAHAAAABxAAAAcgAAAHMAAAB0AAAAdQAAAHYAAAB3AAAAeAAAAHkAAAB6AAAAewAAAHwAAAB9AAAAfgAAAH8AAACAAAAAgQAAAIIAAACDAAAAhAAAAIUAAACGAAAAhwAAAIgAAACJAAAAigAAAIsAAACMAAAAjQAAAI4AAACPAAAAkAAAAJEAAACSAAAAkwAAAJQAAACVAAAAlgAAAJcAAACYAAAAmQAAAJoAAACbAAAAnAAAAJ0AAACeAAAAnwAAAKAAAAChAAAAogAAAKMAAACkAAAApQAAAKYAAACnAAAAqAAAAKkAAACqAAAAqwAAAKwAAACtAAAArgAAAK8AAACwAAAAsQAAALIAAACzAAAAtAAAALUAAAC2AAAAtwAAALgAAAC5AAAAugAAALsAAAC8AAAAvQAAAL4AAAC/AAAAwAAAAMEAAADCAAAAwwAAAMQAAADFAAAAxgAAAMcAAADIAAAAyQAAAMoAAADLAAAAzAAAAM0AAADOAAAAzwAAANAAAADRAAAA0gAAANMAAADUAAAA1QAAANYAAADXAAAA2AAAANkAAADaAAAA2wAAANwAAADdAAAA3gAAAN8AAADgAAAA4QAAAOIAAADjAAAA5AAAAOUAAADmAAAA5wAAAOgAAADpAAAA6gAAAOsAAADsAAAA7QAAAO4AAADvAAAA8AAAAPEAAADyAAAA8wAAAPQAAAD1AAAA9gAAAPcAAAD4AAAA+QAAAPoAAAD7AAAA/AAAAP0AAAD+AAAA/wAAAAABAAABAQAAAgEAAAMBAAAEAQAABQEAAAYBAAAHAQAACAEAAAkBAAAKAQAACwEAAAwBAAANAQAADgEAAA8BAAAQAQAAEQEAABIBAAATAQAAFAEAABUBAAAWAQAAFwEAABgBAAAZAQAAGgEAABsBAAAcAQAAHQEAAB4BAAAfAQAAIAEAACEBAAAiAQAAIwEAACQBAAAlAQAAJgEAACcBAAAoAQAAKQEAACoBAAArAQAALAEAAC0BAAAuAQAALwEAADABAAAxAQAAMgEAADMBAAA0AQAANQEAADYBAAA3AQAAOAEAADkBAAA6AQAAOwEAADwBAAA9AQAAPgEAAD8BAABAAQAAQQEAAEIBAABDAQAARAEAAEUBAABGAQAARwEAAEgBAABJAQAASgEAAEsBAABMAQAATQEAAE4BAABPAQAAUAEAAFEBAABSAQAAUwEAAFQBAABVAQAAVgEAAFcBAABYAQAAWQEAAFoBAABbAQAAXAEAAF0BAABeAQAAXwEAAGABAABhAQAAYgEAAGMBAABkAQAAZQEAAGYBAABnAQAAaAEAAGkBAABqAQAAawEAAGwBAABtAQAAbgEAAG8BAABwAQAAcQEAAHIBAABzAQAAdAEAAHUBAAB2AQAAdwEAAHgBAAB5AQAAegEAAHsBAAB8AQAAfQEAAH4BAAB/AQAAgAEAAIEBAACCAQAAgwEAAIQBAACFAQAAhgEAAIcBAACIAQAAiQEAAIoBAACLAQAAjAEAAI0BAACOAQAAjwEAAJABAACRAQAAkgEAAJMBAACUAQAAlQEAAJYBAACXAQAAmAEAAJkBAACaAQAAmwEAAJwBAACdAQAAngEAAJ8BAACgAQAAoQEAAKIBAACjAQAApAEAAKUBAACmAQAApwEAAKgBAACpAQAAqgEAAKsBAACsAQAArQEAAK4BAACvAQAAsAEAALEBAACyAQAAswEAALQBAAC1AQAAtgEAALcBAAC4AQAAuQEAALoBAAC7AQAAvAEAAL0BAAC+AQAAvwEAAMABAADBAQAAwgEAAMMBAADEAQAAxQEAAMYBAADHAQAAyAEAAMkBAADKAQAAywEAAMwBAADNAQAAzgEAAM8BAADQAQAA0QEAANIBAADTAQAA1AEAANUBAADWAQAA1wEAANgBAADZAQAA2gEAANsBAADcAQAA3QEAAN4BAADfAQAA4AEAAOEBAADiAQAA4wEAAOQBAADlAQAA5gEAAOcBAADoAQAA6QEAAOoBAADrAQAA7AEAAO0BAADuAQAA7wEAAPABAADxAQAA8gEAAPMBAAD0AQAA9QEAAPYBAAD3AQAA+AEAAPkBAAD6AQAA+wEAAPwBAAD9AQAA/gEAAP8BAAAAAgAAAQIAAAICAAADAgAABAIAAAUCAAAGAgAABwIAAAgCAAAJAgAACgIAAAsCAAAMAgAADQIAAA4CAAAPAgAAEAIAABECAAASAgAAEwIAABQCAAAVAgAAFgIAABcCAAAYAgAAGQIAABoCAAAbAgAAHAIAAB0CAAAeAgAAHwIAACACAAAhAgAAIgIAACMCAAAkAgAAJQIAACYCAAAnAgAAKAIAACkCAAAqAgAAKwIAACwCAAAtAgAALgIAAC8CAAAwAgAAMQIAADICAAAzAgAANAIAADUCAAA2AgAANwIAADgCAAA5AgAAOgIAADsCAAA8AgAAPQIAAD4CAAA/AgAAQAIAAEECAABCAgAAQwIAAEQCAABFAgAARgIAAEcCAABIAgAASQIAAEoCAABLAgAATAIAAE0CAABOAgAATwIAAFACAABRAgAAUgIAAFMCAABUAgAAVQIAAFYCAABXAgAAWAIAAFkCAABaAgAAWwIAAFwCAABdAgAAXgIAAF8CAABgAgAAYQIAAGICAABjAgAAZAIAAGUCAABmAgAAZwIAAGgCAABpAgAAagIAAGsCAABsAgAAbQIAAG4CAABvAgAAcAIAAHECAAByAgAAcwIAAHQCAAB1AgAAdgIAAHcCAAB4AgAAeQIAAHoCAAB7AgAAfAIAAH0CAAB+AgAAfwIAAIACAACBAgAAggIAAIMCAACEAgAAhQIAAIYCAACHAgAAiAIAAIkCAACKAgAAiwIAAIwCAACNAgAAjgIAAI8CAACQAgAAkQIAAJICAACTAgAAlAIAAJUCAACWAgAAlwIAAJgCAACZAgAAmgIAAJsCAACcAgAAnQIAAJ4CAACfAgAAoAIAAKECAACiAgAAowIAAKQCAAClAgAApgIAAKcCAACoAgAAqQIAAKoCAACrAgAArAIAAK0CAACuAgAArwIAALACAACxAgAAsgIAALMCAAC0AgAAtQIAALYCAAC3AgAAuAIAALkCAAC6AgAAuwIAALwCAAC9AgAAvgIAAL8CAADAAgAAwQIAAMICAADDAgAAxAIAAMUCAADGAgAAxwIAAMgCAADJAgAAygIAAMsCAADMAgAAzQIAAM4CAADPAgAA0AIAANECAADSAgAA0wIAANQCAADVAgAA1gIAANcCAADYAgAA2QIAANoCAADbAgAA3AIAAN0CAADeAgAA3wIAAOACAADhAgAA4gIAAOMCAADkAgAA5QIAAOYCAADnAgAA6AIAAOkCAADqAgAA6wIAAOwCAADtAgAA7gIAAO8CAADwAgAA8QIAAPICAADzAgAA9AIAAPUCAAD2AgAA9wIAAPgCAAD5AgAA+gIAAPsCAAD8AgAA/QIAAP4CAAD/AgAAAAMAAAEDAAACAwAAAwMAAAQDAAAFAwAABgMAAAcDAAAIAwAACQMAAAoDAAALAwAADAMAAA0DAAAOAwAADwMAABADAAARAwAAEgMAABMDAAAUAwAAFQMAABYDAAAXAwAAGAMAABkDAAAaAwAAGwMAABwDAAAdAwAAHgMAAB8DAAAgAwAAIQMAACIDAAAjAwAAJAMAACUDAAAmAwAAJwMAACgDAAApAwAAKgMAACsDAAAsAwAALQMAAC4DAAAvAwAAMAMAADEDAAAyAwAAMwMAADQDAAA1AwAANgMAADcDAAA4AwAAOQMAADoDAAA7AwAAPAMAAD0DAAA+AwAAPwMAAEADAABBAwAAQgMAAEMDAABEAwAARQMAAEYDAABHAwAASAMAAEkDAABKAwAASwMAAEwDAABNAwAATgMAAE8DAABQAwAAUQMAAFIDAABTAwAAVAMAAFUDAABWAwAAVwMAAFgDAABZAwAAWgMAAFsDAABcAwAAXQMAAF4DAABfAwAAYAMAAGEDAABiAwAAYwMAAGQDAABlAwAAZgMAAGcDAABoAwAAaQMAAGoDAABrAwAAbAMAAG0DAABuAwAAbwMAAHADAABxAwAAcgMAAHMDAAB0AwAAdQMAAHYDAAB3AwAAeAMAAHkDAAB6AwAAewMAAHwDAAB9AwAAfgMAAH8DAACAAwAAgQMAAIIDAACDAwAAhAMAAIUDAACGAwAAhwMAAIgDAACJAwAAigMAAIsDAACMAwAAjQMAAI4DAACPAwAAkAMAAJEDAACSAwAAkwMAAJQDAACVAwAAlgMAAJcDAACYAwAAmQMAAJoDAACbAwAAnAMAAJ0DAACeAwAAnwMAAKADAAChAwAAogMAAKMDAACkAwAApQMAAKYDAACnAwAAqAMAAKkDAACqAwAAqwMAAKwDAACtAwAArgMAAK8DAACwAwAAsQMAALIDAACzAwAAtAMAALUDAAC2AwAAtwMAALgDAAC5AwAAugMAALsDAAC8AwAAvQMAAL4DAAC/AwAAwAMAAMEDAADCAwAAwwMAAMQDAADFAwAAxgMAAMcDAADIAwAAyQMAAMoDAADLAwAAzAMAAM0DAADOAwAAzwMAANADAADRAwAA0gMAANMDAADUAwAA1QMAANYDAADXAwAA2AMAANkDAADaAwAA2wMAANwDAADdAwAA3gMAAN8DAADgAwAA4QMAAOIDAADjAwAA5AMAAOUDAADmAwAA5wMAAOgDAADpAwAA6gMAAOsDAADsAwAA7QMAAO4DAADvAwAA8AMAAPEDAADyAwAA8wMAAPQDAAD1AwAA9gMAAPcDAAD4AwAA+QMAAPoDAAD7AwAA/AMAAP0DAAD+AwAA/wMAAAAEAAABBAAAAgQAAAMEAAAEBAAABQQAAAYEAAAHBAAACAQAAAkEAAAKBAAACwQAAAwEAAANBAAADgQAAA8EAAAQBAAAEQQAABIEAAATBAAAFAQAABUEAAAWBAAAFwQAABgEAAAZBAAAGgQAABsEAAAcBAAAHQQAAB4EAAAfBAAAIAQAACEEAAAiBAAAIwQAACQEAAAlBAAAJgQAACcEAAAoBAAAKQQAACoEAAArBAAALAQAAC0EAAAuBAAALwQAADAEAAAxBAAAMgQAADMEAAA0BAAANQQAADYEAAA3BAAAOAQAADkEAAA6BAAAOwQAADwEAAA9BAAAPgQAAD8EAABABAAAQQQAAEIEAABDBAAARAQAAEUEAABGBAAARwQAAEgEAABJBAAASgQAAEsEAABMBAAATQQAAE4EAABPBAAAUAQAAFEEAABSBAAAUwQAAFQEAABVBAAAVgQAAFcEAABYBAAAWQQAAFoEAABbBAAAXAQAAF0EAAA=","dtype":"int32","shape":[1118]},"index_hover":["0riginalsapien","0xabad1dea","1001010c","100trillionUSD","1stCrassCitizen","22loops","2357_is_prime","2ez28u","3iq_corp","6102bitcoin","8bitgomes","911CORLEBRA777","APamfile","APompliano","AaronvanW","Adrian06661136","Adrian_Xt","Aileen26105714","Aivabtc","AlchemyGPS","AlertTrade","AlexLielacher","AlexMasmej","AlexSaundersAU","Alexover13","AliAlcantara19","AltcoinSara","Ameeyah6","Ameyibo_Bevi","AminCad","Anders_","Andre88612062","AndrewDARMACAP","AndrewYang","Androiddocwales","AnitaPosch","AnnaHovg","AnselLindner","ApolloCurrency","ArbainAnang","ArgosCrypto","Arisbelyz18","ArmandoJoseVE","ArnoldjanssenB","ArtisTurba","ArtistRTweeters","AssetConductor","AvdiuSazan","AwyeeDeaterBob","BAYOJOHNSON89","BCFMONEYMAN1","BGIradji","BHSpeaks","BLOCKTVnews","BOEBTC","BSVDRAGON","BTCDCA","BTCEcuador","BTCJorge","BTCKris_","BTCSchellingPt","BTCTN","BTC_Proponent","BVBTC","B_Rouse3","BahSerign","Bakkt","BakktBot","BankXRP","BeatkoinTokens","BeatsDayday","Beautyon_","BelgaRogel","Benaskren","BigCheds","BigChonis","BigMikD1","BillSim91180793","BinanceAmerica","BinanceResearch","Binance_DEX","Bishalpaul111","BitBitCrypto","BitCoin_Invest_","Bit_Faced","Bitboy_Crypto","Bitcoin","BitcoinBehemoth","BitcoinCom","BitcoinDood","BitcoinEcon","BitcoinEdu","BitcoinErrorLog","BitcoinGent","BitcoinJake09","BitcoinLive1","BitcoinMagazine","BitcoinSVtrain","BitcoinTina","BitcoinWt","Bitcoin_Beyond","Bitcoin_Brain","Bitcoin_HODLer","Bitcoin_Sachs","Bitcoin_Sam","Bitcoin_Vending","Bitcoin_org_","BitcollarDApp","BitsComplicated","Bitsahara","BittrexExchange","BittrexIntl","BiznatchEnt","BlackAmexCrypto","BlockchainBizMg","Blockchayne","BobLoukas","BobMcElrath","Boscoinex_BTC","BotLtc","BradSherman","Brit_Ed","BtBust","BucephalusDev","ButroFX","BuzztwinBlog","CCNMarkets","CCribz","CL207","CRYPTOINZAGHI","Caitlin20129220","CalebWright802","CalvinAyre","Capfolio","CaptinBitcoin","Cardanians_io","CarlosCln3","CasaHODL","CashApp","CaviarDreams5","Cernovich","ChamberRekt","Charles05348110","ChartsBtc","ChicoCrypto","Chiendelalune","CitizenBitcoin","CivEkonom","ClarkDillons","ClassicIsComing","CoinCapsAi","CoinDeskMarkets","CoinEmergency","CoinExChain","CoinPaymentsNET","CoinSpice","CoinTigerEX","CoinbitIO","CoinstorageGuru","Cointelegraph","ColdHandsCrypto","Comrade_Star","Concept211","ConsenSysFrance","ConservativeLee","CornerstoneGlo2","CorySeale7","CryptOwenWilson","CryptoAdventure","CryptoAdvised","CryptoAlex420","CryptoAmb","CryptoBull2020","CryptoDinner","CryptoFinally","CryptoGabrielS","CryptoGodfatha","CryptoGriffy","CryptoHamsterIO","CryptoHayes","CryptoHustle","CryptoKWC","CryptoKnight_49","CryptoMichNL","CryptoPahmp","CryptoRazz","CryptoRichYT","CryptoRothbard","CryptoTownEU","CryptoTraderPro","CryptoWelson","CryptoWild777","CryptoWolfONE","Crypto_Bitlord","Crypto_Boy1","Crypto_Daily","Crypto_Liberty","Crypto_Potato","Crypto__Hodl","Cryptolina","Cryptonex_CNX","CryptooAdy","CryptooIndia","Cryptopian63","CryptotweetsO","CyberEmc","CyhChloe","DCottrell1956","DJDELEX1","DTAPCAP","DYORPodcast","DYsrayl","DadGamerOfTwo","DaleBewan","DanDarkPill","DanielKrawisz","Darc_Binance","Darrellclark2_","DashpayNews","DaveMaikou","Dave_Jonez_02","Davincij15","DeHuntisOn","DeanAshe777","DecentralisedS","Delta_Exchange","DeriBotInfo","DesiCryptoHodlr","Dhyani1811","Diditaihuttu","DiepSanh","DigitexFutures","DiverterB","DiviProject","DliveRetweets","Docluffy92","DoveyWan","DrBitcoinMD","DrCrypto007","DropilCoin","DueDEX_Official","DutchXrp","E3tOfficial","EarnYourCrypto","Edenherrera85","ElastosTroll","ElectracoinECA","ElixiumCrypto","Eljaboom","EmogiCoin","Emperor_YZ","EnriqueDAustin","EntangleIT","ErickGazano","ErikVoorhees","Etherium18","Excellion","FUDXcom","FawzyHelal4","FelixPusch","Felix_Mines","FerhatC77808419","FinalRoseCrypto","Fisher85M","Flightseat","FloridaHodl","FlureePBC","Fooomey","Forbes","ForbesCrypto","Fractal_YT","Fractalwatch","Frankfrompaddys","FredMarion12","FreedomIsntSafe","FriarHass","Fulcrum__News","GagneLegal","GawkGawkThwack","GemCrypto","Gemini","Gi22640742","Give_Bitcoin","GiveawaysMemme","GoodeJaspar","Goodlad86242854","Google","GoogleTrends","GrouchoG","HELLCAMEHOME","HODLAGUY","HaileyLennonBTC","HamEggsnSam","HammerToe","Hanakookie1","HansZoren","HappyChase02","HarryDBean","Hawk_HKC","Hermetec","HeyRhett","Hipster_Trader","Hoathoang19","Hodl42","Hodl8333","HoldHQ","HorusHughes","HotepJesus","IArreses","IBM","IMwunderful","ITYS589","IT_AIRmass","I_AmCrypto_King","Ianbins","IslandHunting","Itzswanky1","JBcryptS","JCStark17","JDalmulder","JKwoski","JL0DAN","JWWeatherman_","JWilliamsFstmed","JackMallers","JacobCanfield","JadoSaransh","JayHao8","Jaygold100","JazzJenei","JeluridaAfrica","JennavieveH","JfkJuni0r","JimktJim","JimmyNLose","JimmyWinMedia","JodiTait_06","JoelDalais","JohnBitcoin4","JohnSmi64773802","JonErlichman","Josh_Rager","Jurgen_Kuhnel","KISBitcoin","KaoBolt","KayodeTimilehi7","KelvinOssai","KenyaCoin","Kenzie6843","KiaCrypto","KicksNg","Kimleng68185557","Krypto_Fuchs","LDSGeek","LN_Master_Hub","LNconf","LTCFoundation","LTCTheRightCoin","LUCIANOPDX","LVMH","LandM_Marius","Lara86559713","LarryChristo3","Leon_Vandenberg","LibertyBlitz","LifesToughMedi1","LilMoonLambo","Lionel46294550","LlisahMarieGal","LocalBitcoins","LowCap_Hunter","LucaBlight8","LuchoPoletti","LukeDashjr","LwanaEsethu_ZA","MADinMelbourne","MCCapitalV","MDSoponKhan17","MH_1291x","MSkieller","MTradesatoshi","M_ednut","MacMopsus","MacalonzoMHA671","MackAttackXRP","MadBitcoins","MagicPoopCannon","Mandrik","MaoZedung","MarcoDaCostaFX","Marinka_Kharkov","MariselGarciaa","MarkGess","MarkMcholy","MarkXvgtpay","MarkYusko","MartianOrthodox","MartyBent","MatiGreenspan","Matt_Tradings","Mavericq84","MazurMieszko","Me2018c","MediumSqueeze","Mel_1104","Melt_Dem","MessengerGoffy","Michael55842871","MichaelMarheine","MichaelMburu_","MichellePhan","MikeQuindazzi","MinerPeanut","MischaEDM","MishaGuttentag","MisterBtc_","ModChicky_TS","MoneyOzor","MoonOverlord","MoonwalkerPt","Mounia_NL","MrBeastYT","MrHodl","MrMichaelNye","MrSurfvivor","Mr_laolex","Mrhill369","MustacheTommy","MvPrazo","MyLegacyKit","My_Livin_Truth","NIXplatform","NIXwhale","NJCAPPO","NLappdeveloper","NWQLD","Nanopoleon1","Nationals","NbkLyrad","Newsweek","NexoFinance","NickSzabo4","NigBtcCommunity","NirXCoin","NischalShetty","NuggetsNewsAU","OKEx","OOttakringerSec","OTC_Bitcoin","Obvi_GlowBabe","Okarin98","OoleeOolee","OrionixToken","OtetHarianto","OttLegalRebels","Paladin_442","PandaofBinance","Paralelni_polis","Patrice_Gaucher","PatriceinMilano","PatrickXDai","PayPal","PeterLBrandt","PeterMcCormack","PeterSchiff","Poetry4Bitcoin","PowertraderIO","Prem_A_Rana","PrestonPysh","ProfFathead","PsychedelicBart","PulpCattel","R3KTOLOGY","Rabbimia8","Raceytherunner","Rachelwolf00","Rafallol7","Ragnarly","Rakamoto","Rakesh_swain62","RampCapitalLLC","RaphaelDeLaGhe3","Ravencoin","RedditBTC","RelevantPeter","Reset_Jett","Rezeki08403854","Rhythmtrader","Richard78654787","RichardHeartWin","Ripple","RippleDarth","RipplePandaXRP","RisingDarkstar","RiverFloww","Rob_Cash71","RobertBeadles","Robertjohnklin2","Rocky_Is","RoePipi","RoentgenNate","Rommie412","RonnieMoas","RosesOnThaMoon","Ross15042644","RpVishan","RussellOkung","SA_Tirmizi","SEmreArslanturk","SGGOODLIFE","SJB6991","Saint_BITCOIN","SajeelAhmad88","SaltyTruth_","SammarA12281909","SamuraiBlender","SantchiWeb","Santiag78758327","SatoshiAnalysis","SatoshiKoji","SatoshisQuotes","Satoshis_D","SddTrade","SebGouspillou","SebastianWols17","Setia12025798","SgtObiWan","ShanGarcia19","Shayjjjzl","ShrimpyApp","SirToshiTV","Smaulgld","SmileyGnome","Snowden","Soraix3","SpeedyReidy11","SpendingBitcoin","SpotXrp","SputnikInt","Square","StackOverflow","StakeFlip","StartupsBot","StefanBacker","StephenPKendal","SteveIcecold1","StopAndDecrypt","SugarEuphemia","Super_Crypto","SwCPoker","Swirgenetwork","SyedShahram","Syndica31559170","TFTC21","TLACUACHON4","TOAOFTRON","TeamSatoshi","TechCrunch","TechnocracyA","TerryJones0001","TheBitcoinTramp","TheCryptoCandy","TheCryptoDog","TheCryptoLark","TheCryptoZombie","TheCryptoconomy","TheDailyHodl","ThefastC","Thrillmex","TokenVision99","TomCrownCrypto","Tony01743933","TonySatocci","TonyVal76476318","Toprolling","TradeSatoshi","TradeplanIO","TradySlim","TravelbyBit","Travis_Kling","TrendTeams","TrustNodes","TruthRaiderHQ","TutkaMartin","TuurDemeester","Twanomatic2","Twitter","TwitterSupport","TyanONE","Tylerderden23","UBS","UDIWERTHEIMER","Username_Bart","VFLBMG2018","VentureCoinist","VeryHash","Viejonazo89","VincentCrypt46","VitalikButerin","VladoBotsvadze","Vlm4life","Vrom14286662","W3stW1ck3dW1tch","WG1WGA_com","WLatinamerica","Wakeeletal","WarriorXrp","WashingtonElite","WatchingBSVGrow","WhalePanda","WhiteRabbitBTC","WillyWonkaXRP","WorldCryptoCon","WorldCryptoNet","WoutdhaenensCOD","XRPBooboo","XRP_OWL","XRPaul_","XRPcryptowolf","Xago_io","Xbond49","Xentagz","XevenueExchange","YORK780","Yeros077","YobitsVision","YouTube","ZLOK","ZeroNoncense","ZubyMusic","_BlockBytch","_CryptoCurator","_JustinMoon_","_Litebringer_","_MartinTan","_NicolasCantu","__CryptoNews","__escapee__","_bizdev","_blockandchain_","_gantheng","_omohoje","_papifexzy","_plexy","_prendjak","_rotexy","_sats","_theperfesser","_unwriter","aantonop","aaroque2016","adam3us","agodgmt","aisha_alireza","akalayci34","akhodl","akitoshomasoton","alexlibertas_","alistairmilne","allene418","allyourproblems","aluko_wemimo","alyciamsnow","amateurdev2","american_hodl","andi_staub","andreaspages","anondran","antiprosynth","applianceguru","ari_cryptonized","astros","auditmeplease","auto1k","bananapredator4","barackomaba","bbelev","beincrypto","beller","bensemchee","bergealex4","bernardofsmb","bibliotechy","billylegal","binance","bitcoin_bananas","bitcoin_ch","bitcoin_clara","bitcoin_dad","bitcoin_kenny","bitcoin_ug","bitcoin_v","bitcoin_whales","bitcoinagile","bitcoinbella_","bitcoinist","bitcoinization","bitcoinpasada","bitcoinprophet1","bitforexcom","bitlivewireio","bitmanmj","bitrefill","bitsko_xt","bitstein","blockchain","blockchainchick","blockchainmikey","blocknewsafrica","boncryp","bopinion","bottlepay","brian_trollz","brianarundel","brixjorgn","brucefenton","btc","btc_alert","btccentermiami","btkblockchain","bullionbuy3r","bullsyebull","business","caiovicentino","callsno1","camilo_marevalo","cantonrd","caraoticaqyagua","cburniske","cedracine","ceredigionman","channelBSV","chidambara09","chrismezzz","christroutner","ck_SNARKs","codeCrypto","codeyisfun","coinbase","coindesk","coinexcom","coingecko","coinmarketfeed","coinmetrics","cointology1","coinyeezy","corblanksma","cpilots2017","criptobastardo","cryprostream","crypt0e","cryptoAcorns","crypto_rand","cryptoanne_07","cryptobaba_","cryptobullrun1","cryptocampfire","cryptocom","cryptofun69","cryptogamma1","cryptokanoon","cryptopiec","cryptorandolph","cryptorecruitr","cryptoserrano","cryptunez","csuwildcat","cyberat2600","cybercodetwins","cybersec_feeds","cz_binance","dAnconiaMining","dan_talmon","dangerbui","danheld","danidanifofani","daniel_st88","dantherealm4n","daro3612","daveweisberger","davidgerard","davidgokhshtein","davidlukas0","davidmarcus","dcoinexchange","debraruh","deetaybeats","derekm00r3","dergigi","dextrade_","dhruvbansal","dickerson_des","dieguito","digital_mine_","digitalassetbuy","digitsu","disco_donald","dmitriigr53","doc_bitcoin","donlekside","dropbitapp","dumpweed91","ecassidy47","edaccessible","efinexchange","eiaine","elyza705","empact","epcamtap","eraser","ercwl","erickchan_XLM","eriktorenberg","erykxd45","eternalcrypto1","ethereum","exitscammed","facebook","fanfare100","fdmello","fiatminimalist","fintechna","flarewallet","fluffypony","fold_app","foxthecrypto","frank___7","freedomFunder","frymanu78","fundstrat","fxdanibra","gaborgurbacs","ganeshhiremath","ganjamanxxx1","ganjoonis","ganzocrypt","georgetoki01","get_pei","ghcryptoguy","giacomozucco","giggspyt","gin9909","gm7t2","grazytgrazynatt","handcashapp","haralabob","hashamadeus","hashing247com","hastytoro","hasufl","helexcorp","herrlayusmen","hilobrain","hishambenadel","hodlonaut","hodloncomrades","hodlwave","hollymacaverr","holochain","holochainnews","htcexodus","humoalex","ibmlahamad","icolaus","ifeoludavies","ike_culas","ilginelcora","imcryptohero","infinite27TS","infokianiaaron","inversebrah","investordonovan","investvoyager","iotatoken","ixkillax","jack","jackharris210","jackstraw710_","jameschurchman","jaredctate","jasminecoin","jason_abdi","jblefevre60","jelin1984","jgarzik","jimmysong","joekelly100","joeloregalatto","john_skotts","johndoe95639982","johnkim77","jokeer_letsgo","jonatack","jonathanaird","jonnylitecoin","josh24601","jpding1","jtjeremybtc","jugenorb","justingesso","justinsuntron","kampai_san","karbonbased","kaya71081736","ketominer","khunai09","kingblue_XRP","kittyhundal","km_veryhash","knowcryptoshow","kontrakai","kriptomat","krugermacro","kryptonautik","kurtwuckertjr","laBITconf","laughingmantwit","laurentlourenco","laz_mafia","leondavibe","lewinni","lex_node","lightcoin","liquiditex","lisamightydavis","lnd_bot","lockyer83","loomdart","lopp","luc_he","macguyvermedia","mamali05436895","manianban","markethive","markyourbets","masterbtcltc","matt_odell","matthewegroves","maxxrpbtc","mbraticevic","mbs_ctt","mdsubel19","medinacerecero","mferreira680","microsoftfrance","mikeinspace","mikeziri","millstoic","mishalederman","mke781","moksedlive24","money_button","moneyonchainok","mpapec2010","mr_peterson7","mrcoolbp","mskvsk","muhbitcoin","my75327873","mynodebtc","narvanamusic","nebraskangooner","newsbtc","nic__carter","nikcantmine","nimiq","ninja_is_real","nixops","njavhulo","nlw","nntaleb","no_plebs","nodl_it","noobihodl","not_iznogood","notgrubles","notsofast","novogratz","npe84","nsquaredcrypto","nuonrg","officialmcafee","ohiobitcoin","onemanatatime","onlypsgroup","opera","opsyperidot","orangedog21","oscargbriseno","oudekaas3","ovstrelec72","pSN8MaqQCsJlBK7","paalsky","paddystash","paddythedub","palmbeachhair","panolim","patrick_ulrich","patricksouth","paxful","percturkey","pesandapur","phil_geiger","pierre_crypt0","pierre_rochard","pollutionCOPD","pourteaux","proofofsteph","pulte","qhfofficial","r0bdawwg","realDonaldTrump","real_dual","real_vijay","rektcapital","rhcguy","ricardoreis007","richardbensberg","rick_bitcoin","risetechmedia","riteshkakkad","riverish333","rob_mose","robatayakichi","rogerkver","rommelmrx01","runonbitcoin","ruthheasman","sabotagebeats","sabthehorrible","saifedean","samanthamarie","santiagopeteru","santisiri","sarkarnilesh215","satasion","satoshi_babe","satoshluk","satpal_satpal","sci4me","scottmelker","selfbankt","sentosumosaba","shane_xrp2","shill_ex","shlLLbILL","sideshiftai8388","skwp","sleburger","smartbrain","smarttapu","snowmonkey1234","socrates1024","spaceracer2","sreedhushah","stacyherbert","stephanlivera","stevenroose3","sthenc","strangequarks","sumawun","sunnydecree","sv_weather","swedetoshi","szenpapi","teddycleps","thebitcoinrabbi","thecryptomonk","theefeyisayo","theinstagibbs","themooncarl","thenextweb","theonevortex","thibm_","thomas_hg3","thsigit","tokenpay","tonyhawk","torusJKL","tradingroomapp","trevorpawluk","tron_family","tron_squad","trx20","trylolli","tsotsoobilove","tudoxC","two2wheel2life","unchainedcap","val5linx","vamosvigilante","vandudgreat","veripsa5","vgorefs","victordorofeev1","walletofsatoshi","weedcoder","whale_alert","winklevoss","wintercooled","wire_master","wolfofcrypto89","woonomic","wsfoxley","x_decr3","xavieriturralde","xcardbymobilum","yantrabtc","yassineARK","ytiminona","zackvoell","zbingledack","zees_grillz","zelaatech","zerohedge","zerononcense","zhusu","zndtoshi"]},"selected":{"id":"10815","type":"Selection"},"selection_policy":{"id":"10816","type":"UnionRenderers"}},"id":"10779","type":"ColumnDataSource"},{"attributes":{"grid_line_color":null,"ticker":{"id":"10755","type":"BasicTicker"}},"id":"10758","type":"Grid"},{"attributes":{},"id":"10818","type":"UnionRenderers"},{"attributes":{},"id":"10808","type":"BasicTickFormatter"},{"attributes":{"axis_label":"y","bounds":"auto","formatter":{"id":"10808","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"10760","type":"BasicTicker"}},"id":"10759","type":"LinearAxis"},{"attributes":{"line_color":{"value":"limegreen"}},"id":"10789","type":"MultiLine"},{"attributes":{"axis_label":"x","bounds":"auto","formatter":{"id":"10806","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"10755","type":"BasicTicker"}},"id":"10754","type":"LinearAxis"},{"attributes":{},"id":"10760","type":"BasicTicker"},{"attributes":{"callback":null},"id":"10769","type":"TapTool"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"10760","type":"BasicTicker"}},"id":"10763","type":"Grid"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"field":"community_str__","transform":{"id":"10778","type":"CategoricalColorMapper"}},"line_alpha":{"value":0.2},"size":{"units":"screen","value":7}},"id":"10783","type":"Circle"},{"attributes":{"source":{"id":"10779","type":"ColumnDataSource"}},"id":"10786","type":"CDSView"},{"attributes":{},"id":"10816","type":"UnionRenderers"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"10814","type":"BoxAnnotation"},{"attributes":{"line_alpha":{"value":0.2}},"id":"10788","type":"MultiLine"},{"attributes":{"text":"","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"10746","type":"Title"}],"root_ids":["10745"]},"title":"Bokeh Application","version":"1.4.0"}};
+  var render_items = [{"docid":"bacf2bb3-dc6c-43c5-bc83-5f9078945589","roots":{"10745":"fb4ae544-2b2c-46e7-91f1-daa33f57ea42"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        clearInterval(timer);
+        embed_document(root);
+      } else {
+        attempts++;
+        if (attempts > 100) {
+          clearInterval(timer);
+          console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        }
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
