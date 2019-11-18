@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from path import Path
-from newsapi import NewsApiClient
+#from newsapi import NewsApiClient
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -27,7 +27,7 @@ sw.update(custom_sw)
 regex = re.compile(r"[^a-zA-Z ]")
 
 def clean_tokens(text):
-    """Cleans and tokenizes text using nltk stopwords, regex to remove symols, lemmatizer."""
+    """Cleans and tokenizes text using nltk stopwords, regex to remove symbols, lemmatizer."""
     #Apply regex filter 
     regex_filter = regex.sub('', text)
     #Get Tokens
