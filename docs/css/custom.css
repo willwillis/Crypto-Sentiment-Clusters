@@ -1,0 +1,8 @@
+
+h1{text-align: center;}
+div.holowidgets{position:relative }
+.bk-root .bk-toolbar.bk-above{float:left}
+div.hololayout{display:block !important;width:80% !important;margin:auto!important}
+div.price{   position: relative;
+    top: -380px;
+    left: 900;}
