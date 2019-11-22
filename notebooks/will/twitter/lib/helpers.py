@@ -6,6 +6,9 @@ import os
 import pandas as pd
 import json
 
+import pprint
+pp = pprint.PrettyPrinter(indent=4)
+
 download_attempts = {
     "found": [],
     "missing": []
@@ -37,15 +40,48 @@ def filter_tweet_fields_as_dict(input_file):
             "created_at" : data['created_at'],
             "screen_name" : data['user']['screen_name'],
             "full_text" : data['text'],
-            "geo" : data['geo'],
-            "contributors" : data['contributors'],
+            #"geo" : data['geo'],
+            #"contributors" : data['contributors'],
             "id": data["id"],
             "lang": data["lang"],
-            "retweet_count": data["retweet_count"]
+            #"retweet_count": data["retweet_count"],
+            #"retweeted_status" : None,
+            #"entities" : None
+#             "in_reply_to_screen_name": data["in_reply_to_screen_name"],
+#             "in_reply_to_user_id_str" : data["in_reply_to_user_id_str"],
+#             "in_reply_to_status_id_str" : data["in_reply_to_status_id_str"]
             }
             
+            if 'user' in data:
+                captured_fields['user_favourites_count'] = data['user']['favourites_count']
+                captured_fields['user_followers_count'] = data['user']['followers_count']
+                captured_fields['user_friends_count'] = data['user']['friends_count']
+                captured_fields['user_location'] = data['user']['location']
+                captured_fields['user_profile_image_url'] = data['user']['profile_image_url']
+                captured_fields['user_id'] = data['user']['id']
+                
+            if 'quoted_status' in data:
+                captured_fields['quoted_quote_count'] = data['quoted_status']['quote_count']
+                captured_fields['quoted_reply_count'] = data['quoted_status']['reply_count']
+                captured_fields['quoted_retweet_count'] = data['quoted_status']['retweet_count']
             if 'extended_tweet' in data:
                 captured_fields['full_text'] = data['extended_tweet']['full_text']
+            if 'retweeted_status' in data:
+                #captured_fields['retweeted_status'] = data['retweeted_status']
+                captured_fields['rt_status_screen_name'] = data['retweeted_status']['user']['screen_name']
+                captured_fields['rt_status_id'] = data['retweeted_status']['user']['id_str']
+            if 'entities' in data:
+                #captured_fields['entities'] = data["entities"] #['user_mentions']['screen_name'] #__user_mentions__screen_name
+                mentions = []
+                ids = []
+                for mention in data["entities"]['user_mentions']:
+                    mentions.append(mention['screen_name'])
+                    ids.append(mention['id_str'])
+                captured_fields['mentions'] = mentions
+                captured_fields['mention_ids'] = ids
+                #mentions = [ dict['screen_name'] for dict in data["entities"]['user_mentions'][i] ]
+                #captured_fields['mentions'] = mentions
+                
             #print(captured_fields)    
             all_tweets.append(captured_fields)
     return all_tweets
